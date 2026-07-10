@@ -27,6 +27,8 @@
 
 ## 使用方法
 
+仓库中的 [Codex-Model-Unlocker-v0.1.2-macOS.zip](release/Codex-Model-Unlocker-v0.1.2-macOS.zip) 是已经打包好的 macOS App，下载并解压后可以直接使用。
+
 1. 确认 Codex 桌面端已经安装在 `/Applications/ChatGPT.app` 或 `/Applications/Codex.app`。
 2. 确认模型目录位于 `~/.codex/cc-switch-model-catalog.json`。
 3. 双击 `Codex 模型解锁器.app`，选择“重启并解锁”。
