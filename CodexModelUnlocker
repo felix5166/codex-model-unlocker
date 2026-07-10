@@ -1,0 +1,21 @@
+#!/bin/zsh
+set -u
+
+RESOURCE_DIR="$(cd "$(dirname "$0")/../Resources" && pwd)"
+CHATGPT_NODE="/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node"
+CODEX_NODE="/Applications/Codex.app/Contents/Resources/cua_node/bin/node"
+
+if [[ -x "$CHATGPT_NODE" ]]; then
+  NODE="$CHATGPT_NODE"
+elif [[ -x "$CODEX_NODE" ]]; then
+  NODE="$CODEX_NODE"
+elif [[ -x "$HOME/.nvm/versions/node/v24.14.0/bin/node" ]]; then
+  NODE="$HOME/.nvm/versions/node/v24.14.0/bin/node"
+elif command -v node >/dev/null 2>&1; then
+  NODE="$(command -v node)"
+else
+  /usr/bin/osascript -e 'display alert "Codex 模型解锁器" message "未找到 Node.js。请重新安装或更新 Codex 桌面端。" as critical'
+  exit 1
+fi
+
+exec "$NODE" "$RESOURCE_DIR/injector.mjs" "$@"
