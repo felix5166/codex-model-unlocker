@@ -98,4 +98,4 @@ OUTPUT_DIR="$HOME/Desktop" ./build.sh
 
 ## 许可证
 
-本项目采用 [Unlicense](LICENSE)，在法律允许的范围内贡献至公共领域。软件按“现状”提供，不附带任何担保。
+本项目采用 [MIT License](LICENSE)。允许使用、复制、修改、分发和商用，但必须保留原始版权及许可证声明。软件按“现状”提供，不附带任何担保。
