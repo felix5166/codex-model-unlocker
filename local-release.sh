@@ -147,23 +147,19 @@ record_local_artifact() {
 generate_release_notes() {
   local version="$1"
   local output="$2"
-  local tag previous_tag range
+  local commit
 
-  tag="v${version}"
-  previous_tag="$(git -C "$SCRIPT_DIR" tag --list 'v*' --sort=-version:refname | awk -v current="$tag" '$0 != current { print; exit }')"
-  if [[ -n "$previous_tag" ]]; then
-    range="${previous_tag}..HEAD"
-  else
-    range="$(git -C "$SCRIPT_DIR" rev-list --max-parents=0 HEAD)..HEAD"
-  fi
+  commit="$(git -C "$SCRIPT_DIR" rev-parse --short=12 HEAD)"
 
   {
     printf '# ChatGPT自定义模型 %s\n\n' "$version"
-    printf '> Built from commit `%s`.\n\n' "$(git -C "$SCRIPT_DIR" rev-parse --short=12 HEAD)"
-    printf '## Changes\n\n'
-    git -C "$SCRIPT_DIR" log --first-parent --format='- %s (`%h`)' "$range"
-    printf '\n\n## Model configuration\n\n'
-    printf 'Models are read from `models.json`; `displayName` is shown in the client and `id` is used for requests.\n'
+    printf '> 构建提交：`%s`。\n\n' "$commit"
+    printf '## 更新内容\n\n'
+    printf '%s\n' '- 支持从 `models.json` 读取自定义模型名称和模型 ID。'
+    printf '%s\n' '- 将模型名称注入界面，选中后按配置的模型 ID 发起请求。'
+    printf '%s\n' '- 提供 macOS DMG 安装包。'
+    printf '\n## 模型配置\n\n'
+    printf '%s\n' '`displayName` 用于界面显示，`id` 用于客户端模型标识和实际请求。'
   } > "$output"
 }
 

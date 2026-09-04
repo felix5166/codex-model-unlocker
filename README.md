@@ -34,32 +34,9 @@
 
 首次打开如果被 macOS 拦截，可在 Finder 中右键应用并选择“打开”。
 
-### 清除已经注入的模型
+### 卸载
 
-如果插件之前运行过，想确认模型已经移除：
-
-1. 停止模型解锁器进程。
-2. 完全退出 ChatGPT/Codex，不只是关闭当前窗口。
-3. 在插件不启动的情况下重新打开 ChatGPT/Codex。
-
-重新打开后不会再有自定义模型。仅刷新页面或只关闭窗口不等于完全重启应用，不能作为清除注入的依据。
-
-## 从源码构建
-
-要求 macOS 13 或更高版本。构建过程只使用系统自带的 `zsh`、Quick Look、`sips`、`iconutil` 和 `codesign`。
-
-```zsh
-chmod +x build.sh CodexModelUnlocker test.sh
-./test.sh
-./build.sh
-open "dist/ChatGPT自定义模型.app"
-```
-
-默认输出到 `dist/`。也可以临时指定其他输出目录：
-
-```zsh
-OUTPUT_DIR="$HOME/Desktop" ./build.sh
-```
+停止模型解锁器后，完全退出 ChatGPT/Codex，再重新打开，确认此前注入的模型已经全部消失，然后删除 `ChatGPT自定义模型.app`。重新打开时不要启动插件；只有再次启动插件才会重新注入。仅刷新页面或只关闭窗口不等于完全重启应用。
 
 ## 源码结构
 
@@ -73,23 +50,6 @@ OUTPUT_DIR="$HOME/Desktop" ./build.sh
 | `AppIcon.svg` | 应用图标源文件 |
 | `build.sh` | 生成并临时签名 `.app` |
 | `test.sh` | 源码和构建产物的静态检查 |
-
-## 命令行调试
-
-构建后可以直接运行内部注入器并输出日志：
-
-```zsh
-"dist/ChatGPT自定义模型.app/Contents/MacOS/CodexModelUnlocker" --verbose
-```
-
-运行日志和锁文件分别位于：
-
-- `~/Library/Logs/CodexModelUnlocker.log`
-- `~/Library/Application Support/CodexModelUnlocker`
-
-## 卸载
-
-先停止模型解锁器，再完全退出 ChatGPT/Codex 并重新打开，确认此前注入的模型已经全部消失，然后删除 `ChatGPT自定义模型.app`。需要清理运行记录时，再删除上面的日志和应用支持目录。
 
 ## 兼容性说明
 
