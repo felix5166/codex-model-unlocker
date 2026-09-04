@@ -99,7 +99,7 @@ run_release_gate() {
 }
 
 artifact_name() {
-  printf 'ChatGPT自定义模型-v%s-macOS.dmg\n' "$1"
+  printf 'ChatGPT-Custom-Models-v%s-macOS.dmg\n' "$1"
 }
 
 artifact_path() {
@@ -115,7 +115,7 @@ checksum_path() {
 }
 
 release_notes_path() {
-  printf '%s/ChatGPT自定义模型-v%s-macOS-release-notes.md\n' "$ARTIFACT_DIR" "$1"
+  printf '%s/ChatGPT-Custom-Models-v%s-macOS-release-notes.md\n' "$ARTIFACT_DIR" "$1"
 }
 
 record_local_artifact() {
@@ -134,7 +134,7 @@ record_local_artifact() {
   fi
   mv "$temporary" "$history"
 
-  for candidate in "$ARTIFACT_DIR"/ChatGPT自定义模型-v*-macOS.dmg; do
+  for candidate in "$ARTIFACT_DIR"/ChatGPT-Custom-Models-v*-macOS.dmg; do
     [[ -f "$candidate" ]] || continue
     item="$(basename "$candidate")"
     if ! grep -Fqx "$item" "$history"; then
