@@ -26,7 +26,7 @@
 
 ## 使用方法
 
-请从 [GitHub Releases](https://github.com/felix5166/codex-model-unlocker/releases) 下载最新版本的 macOS 压缩包，解压后使用其中的 `ChatGPT自定义模型.app`。发布包已经内置当前的 `models.json` 配置，普通使用不需要编辑源码或本地构建。
+请从 [GitHub Releases](https://github.com/felix5166/codex-model-unlocker/releases) 下载最新版本的 DMG，双击打开后将 `ChatGPT自定义模型.app` 拖入“应用程序”文件夹。发布包已经内置当前的 `models.json` 配置，普通使用不需要编辑源码或本地构建。
 
 1. 确认 Codex 桌面端已经安装在 `/Applications/ChatGPT.app` 或 `/Applications/Codex.app`。
 2. 双击 `ChatGPT自定义模型.app`，选择“重启并解锁”。

@@ -24,7 +24,7 @@ Examples:
   ./local-release.sh prepare 0.1.18
   ./local-release.sh publish 0.1.18
 
-prepare checks the source, builds the macOS app, and creates a ZIP, metadata,
+prepare checks the source, builds the macOS app, and creates a DMG, metadata,
 SHA256 file, and release notes under ~/.cache/codex-model-unlocker/releases.
 publish verifies that prepared artifact belongs to the current commit, creates
 and pushes v<version>, then creates and publishes a GitHub Release.
@@ -80,7 +80,7 @@ run_release_gate() {
   require_command git
   require_command node
   require_command shasum
-  require_command ditto
+  require_command hdiutil
 
   /usr/bin/plutil -lint "$INFO_PLIST"
   "$SCRIPT_DIR/test.sh"
@@ -99,7 +99,7 @@ run_release_gate() {
 }
 
 artifact_name() {
-  printf 'ChatGPT自定义模型-v%s-macOS.zip\n' "$1"
+  printf 'ChatGPT自定义模型-v%s-macOS.dmg\n' "$1"
 }
 
 artifact_path() {
@@ -134,12 +134,12 @@ record_local_artifact() {
   fi
   mv "$temporary" "$history"
 
-  for candidate in "$ARTIFACT_DIR"/ChatGPT自定义模型-v*-macOS.zip; do
+  for candidate in "$ARTIFACT_DIR"/ChatGPT自定义模型-v*-macOS.dmg; do
     [[ -f "$candidate" ]] || continue
     item="$(basename "$candidate")"
     if ! grep -Fqx "$item" "$history"; then
       rm -f "$candidate" "${candidate}.meta" "${candidate}.sha256"
-      rm -f "${ARTIFACT_DIR}/${item%.zip}-release-notes.md"
+      rm -f "${ARTIFACT_DIR}/${item%.dmg}-release-notes.md"
     fi
   done
 }
@@ -195,7 +195,8 @@ prepare_release() {
 
   trap 'rm -f "$artifact_tmp" "$metadata_tmp" "$checksum_tmp" "$notes_tmp"' EXIT
   info "打包 macOS 应用"
-  /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$artifact_tmp"
+  /usr/bin/hdiutil create -quiet -ov -format UDZO \
+    -volname "ChatGPT自定义模型" -srcfolder "$APP_PATH" "$artifact_tmp"
   artifact_sha256="$(shasum -a 256 "$artifact_tmp" | awk '{print $1}')"
   {
     printf 'version=%s\n' "$version"
