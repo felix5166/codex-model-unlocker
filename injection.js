@@ -2,7 +2,7 @@
   "use strict";
 
   const BOOT_MODELS = [];
-  const VERSION = "0.1.21";
+  const VERSION = "0.1.22";
   const GLOBAL_KEY = "__CODEX_MODEL_UNLOCKER__";
   const STATSIG_MODEL_CONFIG = "107580212";
   const modelListRequestIds = new Set();

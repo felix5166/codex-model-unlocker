@@ -7,7 +7,7 @@
 - 从插件内置的 `models.json` 读取模型配置：`displayName` 用于界面显示，`id` 用于客户端模型标识和实际请求。
 - 启动或重启 Codex 时启用一个随机的 Chromium 调试端口，仅监听 `127.0.0.1`。
 - 通过 CDP 在 renderer 运行时补充 Statsig 白名单和模型列表响应。
-- 插件启动后在 macOS 菜单栏显示状态图标，点击图标可以选择“退出”。
+- 插件启动后在 macOS 菜单栏显示项目图标，点击图标打开菜单；当前菜单只提供“退出”。
 - 注入只存在于当前 ChatGPT/Codex renderer 的内存中。插件停止或删除后，完全重启 ChatGPT/Codex，之前注入的模型会全部丢弃；只有再次启动插件才会重新注入。
 
 它不会修改 `ChatGPT.app`、`Codex.app`、`app.asar`、代码签名、API 密钥或历史会话。

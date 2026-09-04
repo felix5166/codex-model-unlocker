@@ -4,7 +4,7 @@
 
 @interface StatusMenuController : NSObject <NSApplicationDelegate>
 @property(nonatomic, assign) pid_t parentPID;
-@property(nonatomic, copy) NSArray<NSDictionary *> *models;
+@property(nonatomic, copy) NSString *iconPath;
 @property(nonatomic, strong) NSStatusItem *statusItem;
 @property(nonatomic, strong) NSTimer *parentMonitor;
 @end
@@ -16,9 +16,10 @@
 
     self.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
     NSButton *button = self.statusItem.button;
-    button.image = [NSImage imageWithSystemSymbolName:@"slider.horizontal.3"
-                                  accessibilityDescription:@"ChatGPT自定义模型"];
-    button.image.template = YES;
+    NSImage *icon = [[NSImage alloc] initWithContentsOfFile:self.iconPath];
+    icon.size = NSMakeSize(18.0, 18.0);
+    button.image = icon;
+    button.imageScaling = NSImageScaleProportionallyDown;
     button.toolTip = @"ChatGPT自定义模型";
     self.statusItem.menu = [self makeMenu];
 
@@ -38,27 +39,11 @@
 
 - (NSMenu *)makeMenu {
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@"ChatGPT自定义模型"];
-
-    NSMenuItem *title = [[NSMenuItem alloc] initWithTitle:@"ChatGPT自定义模型"
-                                                    action:nil
-                                             keyEquivalent:@""];
-    title.enabled = NO;
-    [menu addItem:title];
-
-    for (NSDictionary *model in self.models) {
-        NSString *displayName = model[@"displayName"] ?: model[@"id"] ?: @"";
-        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:displayName action:nil keyEquivalent:@""];
-        item.toolTip = model[@"id"];
-        item.enabled = NO;
-        [menu addItem:item];
-    }
-
-    [menu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem *stop = [[NSMenuItem alloc] initWithTitle:@"退出"
+    NSMenuItem *quit = [[NSMenuItem alloc] initWithTitle:@"退出"
                                                     action:@selector(stopPlugin:)
                                              keyEquivalent:@""];
-    stop.target = self;
-    [menu addItem:stop];
+    quit.target = self;
+    [menu addItem:quit];
     return menu;
 }
 
@@ -84,29 +69,11 @@ static NSString *ArgumentValue(NSString *name) {
     return arguments[index + 1];
 }
 
-static NSArray<NSDictionary *> *LoadModels(NSString *value) {
-    if (value.length == 0) return @[];
-    NSData *data = [value dataUsingEncoding:NSUTF8StringEncoding];
-    NSArray *items = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-    if (![items isKindOfClass:NSArray.class]) return @[];
-
-    NSMutableArray<NSDictionary *> *models = [NSMutableArray array];
-    for (id item in items) {
-        if (![item isKindOfClass:NSDictionary.class]) continue;
-        NSString *modelID = item[@"id"];
-        if (![modelID isKindOfClass:NSString.class] || modelID.length == 0) continue;
-        NSString *displayName = item[@"displayName"];
-        if (![displayName isKindOfClass:NSString.class] || displayName.length == 0) displayName = modelID;
-        [models addObject:@{@"id": modelID, @"displayName": displayName}];
-    }
-    return models;
-}
-
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         StatusMenuController *controller = [[StatusMenuController alloc] init];
         controller.parentPID = (pid_t)[ArgumentValue(@"--parent-pid") intValue];
-        controller.models = LoadModels(ArgumentValue(@"--models"));
+        controller.iconPath = ArgumentValue(@"--icon-path");
 
         NSApplication *application = NSApplication.sharedApplication;
         application.delegate = controller;

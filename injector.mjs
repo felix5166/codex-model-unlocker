@@ -5,7 +5,7 @@ import path from "node:path";
 import net from "node:net";
 import { fileURLToPath } from "node:url";
 
-const VERSION = "0.1.21";
+const VERSION = "0.1.22";
 const APP_TITLE = "ChatGPT自定义模型";
 const HOME = os.homedir();
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -15,6 +15,7 @@ const LOCK_PATH = path.join(SUPPORT_DIR, "launcher.lock");
 const LOG_PATH = path.join(HOME, "Library", "Logs", "CodexModelUnlocker.log");
 const MODEL_CONFIG = path.join(SCRIPT_DIR, "models.json");
 const STATUS_MENU_PATH = path.join(SCRIPT_DIR, "ChatGPTCustomModelsStatusMenu");
+const STATUS_ICON_PATH = path.join(SCRIPT_DIR, "AppIcon.icns");
 const BUNDLE_ID = "com.openai.codex";
 let statusMenuProcess = null;
 
@@ -63,12 +64,12 @@ const showError = (message) => {
   runAppleScript(`display alert "${APP_TITLE}" message "${quoteAppleScript(message)}" as critical`);
 };
 
-const startStatusMenu = (models) => {
-  if (statusMenuProcess || !fs.existsSync(STATUS_MENU_PATH)) return;
+const startStatusMenu = () => {
+  if (statusMenuProcess || !fs.existsSync(STATUS_MENU_PATH) || !fs.existsSync(STATUS_ICON_PATH)) return;
   try {
     statusMenuProcess = spawn(
       STATUS_MENU_PATH,
-      ["--parent-pid", String(process.pid), "--models", JSON.stringify(models)],
+      ["--parent-pid", String(process.pid), "--icon-path", STATUS_ICON_PATH],
       { detached: true, stdio: "ignore" },
     );
     statusMenuProcess.once("error", (error) => {
@@ -447,7 +448,7 @@ const main = async () => {
 
   log("launcher_started", { version: VERSION, appPath, port, models });
   writeState({ pid: process.pid, version: VERSION, appPath, port, models, startedAt: Date.now() });
-  startStatusMenu(models);
+  startStatusMenu();
   await waitForTargets(port);
 
   const sessions = new Map();
