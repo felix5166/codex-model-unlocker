@@ -186,7 +186,7 @@ prepare_release() {
   metadata="$(metadata_path "$version")"
   checksum="$(checksum_path "$version")"
   notes="$(release_notes_path "$version")"
-  artifact_tmp="${artifact}.tmp.$$"
+  artifact_tmp="${artifact}.tmp.$$.dmg"
   metadata_tmp="${metadata}.tmp.$$"
   checksum_tmp="${checksum}.tmp.$$"
   notes_tmp="${notes}.tmp.$$"
