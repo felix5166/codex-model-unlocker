@@ -5,16 +5,15 @@ import path from "node:path";
 import net from "node:net";
 import { fileURLToPath } from "node:url";
 
-const VERSION = "0.1.2";
-const APP_TITLE = "Codex 模型解锁器";
+const VERSION = "0.1.18";
+const APP_TITLE = "ChatGPT自定义模型";
 const HOME = os.homedir();
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SUPPORT_DIR = path.join(HOME, "Library", "Application Support", "CodexModelUnlocker");
 const STATE_PATH = path.join(SUPPORT_DIR, "state.json");
 const LOCK_PATH = path.join(SUPPORT_DIR, "launcher.lock");
 const LOG_PATH = path.join(HOME, "Library", "Logs", "CodexModelUnlocker.log");
-const DEFAULT_CATALOG = path.join(HOME, ".codex", "cc-switch-model-catalog.json");
-const DEFAULT_CONFIG = path.join(HOME, ".codex", "config.toml");
+const MODEL_CONFIG = path.join(SCRIPT_DIR, "models.json");
 const BUNDLE_ID = "com.openai.codex";
 
 fs.mkdirSync(SUPPORT_DIR, { recursive: true, mode: 0o700 });
@@ -29,7 +28,6 @@ const hasOption = (name) => args.includes(name);
 const attachPort = Number(optionValue("--attach-port") || 0);
 const runOnce = hasOption("--once");
 const noDialog = hasOption("--no-dialog");
-const catalogPath = optionValue("--catalog") || DEFAULT_CATALOG;
 const requestedAppPath = optionValue("--app");
 
 const log = (message, detail = null) => {
@@ -154,44 +152,80 @@ const getFreePort = () => new Promise((resolve, reject) => {
   });
 });
 
-const launchApp = (appPath, port) => {
+const bundleExecutable = (appPath) => {
+  const infoPath = path.join(appPath, "Contents", "Info.plist");
+  let declared = "";
+  try {
+    const result = spawnSync(
+      "/usr/bin/plutil",
+      ["-extract", "CFBundleExecutable", "raw", "-o", "-", infoPath],
+      { encoding: "utf8" },
+    );
+    declared = result.status === 0 ? result.stdout.trim() : "";
+  } catch {
+    // Fall back to the app name when plutil is unavailable or Info.plist is invalid.
+  }
+  const appName = path.basename(appPath, ".app");
+  const names = [declared, appName, "ChatGPT", "Codex"].filter((name, index, all) => (
+    name && !name.includes("/") && all.indexOf(name) === index
+  ));
+  const executable = names
+    .map((name) => path.join(appPath, "Contents", "MacOS", name))
+    .find((candidate) => fs.existsSync(candidate));
+  if (!executable) throw new Error(`未找到应用可执行文件：${path.join(appPath, "Contents", "MacOS")}`);
+  return executable;
+};
+
+const launchApp = (appPath, port) => new Promise((resolve, reject) => {
+  let executable;
+  try {
+    executable = bundleExecutable(appPath);
+  } catch (error) {
+    reject(error);
+    return;
+  }
   const child = spawn(
-    "/usr/bin/open",
+    executable,
     [
-      "-n",
-      appPath,
-      "--args",
       `--remote-debugging-port=${port}`,
       "--remote-debugging-address=127.0.0.1",
     ],
     { detached: true, stdio: "ignore" },
   );
-  child.unref();
-};
+  child.once("error", (error) => {
+    log("app_launch_failed", { executable, error: String(error?.message || error) });
+    reject(new Error(`启动应用失败：${String(error?.message || error)}`));
+  });
+  child.once("spawn", () => {
+    child.unref();
+    resolve();
+  });
+});
 
-const normalizeModelName = (item) => {
-  const value = typeof item === "string"
+const normalizeModel = (item) => {
+  const id = typeof item === "string"
     ? item
-    : item?.model || item?.slug || item?.id || item?.name;
-  if (typeof value !== "string") return "";
-  const name = value.trim();
-  if (!name || name.length > 160 || /[\u0000-\u001f]/.test(name)) return "";
-  return name;
+    : item?.id || item?.model || item?.slug || item?.name;
+  if (typeof id !== "string") return null;
+  const normalizedId = id.trim();
+  if (!normalizedId || normalizedId.length > 160 || /[\u0000-\u001f]/.test(normalizedId)) return null;
+  const displayName = typeof item === "object" && typeof item?.displayName === "string"
+    ? item.displayName.trim()
+    : normalizedId;
+  if (!displayName || displayName.length > 160 || /[\u0000-\u001f]/.test(displayName)) return null;
+  return { id: normalizedId, displayName };
 };
 
 const loadModels = () => {
-  const names = [];
-  if (fs.existsSync(catalogPath)) {
-    const catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8"));
-    const models = Array.isArray(catalog) ? catalog : catalog.models;
-    if (Array.isArray(models)) names.push(...models.map(normalizeModelName));
+  if (!fs.existsSync(MODEL_CONFIG)) return [];
+  const config = JSON.parse(fs.readFileSync(MODEL_CONFIG, "utf8"));
+  const configured = Array.isArray(config) ? config : config.models;
+  const models = Array.isArray(configured) ? configured.map(normalizeModel) : [];
+  const unique = new Map();
+  for (const model of models.filter(Boolean)) {
+    if (!unique.has(model.id)) unique.set(model.id, model);
   }
-  if (fs.existsSync(DEFAULT_CONFIG)) {
-    const config = fs.readFileSync(DEFAULT_CONFIG, "utf8");
-    const match = config.match(/^\s*model\s*=\s*["']([^"']+)["']/m);
-    if (match) names.push(normalizeModelName(match[1]));
-  }
-  return Array.from(new Set(names.filter(Boolean)));
+  return [...unique.values()];
 };
 
 const buildInjectionSource = (models) => {
@@ -214,6 +248,7 @@ const fetchTargets = async (port) => {
     ["page", "webview"].includes(target.type)
     && typeof target.webSocketDebuggerUrl === "string"
     && !String(target.url || "").startsWith("devtools://")
+    && !String(target.url || "").includes("avatar-overlay")
   ));
 };
 
@@ -371,7 +406,7 @@ const main = async () => {
 
   let models = loadModels();
   if (models.length === 0) {
-    throw new Error(`模型目录中没有可用模型：${catalogPath}`);
+    throw new Error(`模型配置中没有可用模型：${MODEL_CONFIG}`);
   }
 
   let port = attachPort;
@@ -386,7 +421,7 @@ const main = async () => {
     }
 
     port = await getFreePort();
-    launchApp(appPath, port);
+    await launchApp(appPath, port);
   }
 
   log("launcher_started", { version: VERSION, appPath, port, models });
@@ -438,7 +473,7 @@ const main = async () => {
 
     if (!successNotified && sessions.size > 0) {
       successNotified = true;
-      notify(`已解锁 ${models.length} 个模型：${models.join(", ")}`);
+      notify(`已解锁 ${models.length} 个模型：${models.map((model) => model.displayName).join(", ")}`);
     }
 
     if (runOnce && (injectedThisPass > 0 || sessions.size > 0)) break;
@@ -457,7 +492,7 @@ const main = async () => {
         }
       }
       writeState({ pid: process.pid, version: VERSION, appPath, port, models, startedAt: Date.now() });
-      notify(`模型目录已更新：${models.join(", ")}`);
+      notify(`模型目录已更新：${models.map((model) => model.displayName).join(", ")}`);
     }
 
     if (!attachPort && !appIsRunning(appPath)) {

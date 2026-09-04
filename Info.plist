@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
   <key>CFBundleDisplayName</key>
-  <string>Codex 模型解锁器</string>
+  <string>ChatGPT自定义模型</string>
   <key>CFBundleExecutable</key>
   <string>CodexModelUnlocker</string>
   <key>CFBundleIconFile</key>
@@ -13,13 +13,13 @@
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>Codex 模型解锁器</string>
+  <string>ChatGPT自定义模型</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.2</string>
+  <string>0.1.18</string>
   <key>CFBundleVersion</key>
-  <string>3</string>
+  <string>18</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
   <key>LSUIElement</key>

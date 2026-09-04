@@ -1,14 +1,13 @@
-# Codex 模型解锁器
+# ChatGPT自定义模型
 
-独立的 macOS 启动器，用来把中转站提供、但被 Codex 桌面端前端白名单隐藏的模型加入模型选择器。不依赖 Codex++，也不修改 Codex 安装包。
+独立的 macOS 启动器，从插件内置的 `models.json` 读取自定义模型的 `displayName` 和 `id`，通过 CDP 把模型名称和模型 ID 注入 ChatGPT/Codex 的 renderer。用户选中后，客户端按该模型 ID 发起请求。
 
 ## 它做了什么
 
-- 从 `~/.codex/cc-switch-model-catalog.json` 读取模型目录。
-- 同时读取 `~/.codex/config.toml` 中当前配置的 `model`。
-- 重启 Codex 时启用一个随机的 Chromium 调试端口，仅监听 `127.0.0.1`。
-- 在运行时补充 Statsig 模型白名单，并复用 Codex 自身的 React 模型选择回调。
-- Codex 退出后自动结束，所有运行时修改同时失效。
+- 从插件内置的 `models.json` 读取模型配置：`displayName` 用于界面显示，`id` 用于客户端模型标识和实际请求。
+- 启动或重启 Codex 时启用一个随机的 Chromium 调试端口，仅监听 `127.0.0.1`。
+- 通过 CDP 在 renderer 运行时补充 Statsig 白名单、`model/list` 返回值和 React 模型状态。
+- 注入只存在于当前 ChatGPT/Codex renderer 的内存中。插件停止或删除后，完全重启 ChatGPT/Codex，之前注入的模型会全部丢弃；只有再次启动插件才会重新注入。
 
 它不会修改 `ChatGPT.app`、`Codex.app`、`app.asar`、代码签名、API 密钥或历史会话。
 
@@ -27,14 +26,23 @@
 
 ## 使用方法
 
-仓库中的 [Codex-Model-Unlocker-v0.1.2-macOS.zip](release/Codex-Model-Unlocker-v0.1.2-macOS.zip) 是已经打包好的 macOS App，下载并解压后可以直接使用。
+请从 [GitHub Releases](https://github.com/felix5166/codex-model-unlocker/releases) 下载最新版本的 macOS 压缩包，解压后使用其中的 `ChatGPT自定义模型.app`。发布包已经内置当前的 `models.json` 配置，普通使用不需要编辑源码或本地构建。
 
 1. 确认 Codex 桌面端已经安装在 `/Applications/ChatGPT.app` 或 `/Applications/Codex.app`。
-2. 确认模型目录位于 `~/.codex/cc-switch-model-catalog.json`。
-3. 双击 `Codex 模型解锁器.app`，选择“重启并解锁”。
-4. 新建任务并打开模型选择器。
+2. 双击 `ChatGPT自定义模型.app`，选择“重启并解锁”。
+3. 新建任务并打开模型选择器。
 
 首次打开如果被 macOS 拦截，可在 Finder 中右键应用并选择“打开”。
+
+### 清除已经注入的模型
+
+如果插件之前运行过，想确认模型已经移除：
+
+1. 停止模型解锁器进程。
+2. 完全退出 ChatGPT/Codex，不只是关闭当前窗口。
+3. 在插件不启动的情况下重新打开 ChatGPT/Codex。
+
+重新打开后不会再有自定义模型。仅刷新页面或只关闭窗口不等于完全重启应用，不能作为清除注入的依据。
 
 ## 从源码构建
 
@@ -44,7 +52,7 @@
 chmod +x build.sh CodexModelUnlocker test.sh
 ./test.sh
 ./build.sh
-open "dist/Codex 模型解锁器.app"
+open "dist/ChatGPT自定义模型.app"
 ```
 
 默认输出到 `dist/`。也可以临时指定其他输出目录：
@@ -60,6 +68,7 @@ OUTPUT_DIR="$HOME/Desktop" ./build.sh
 | `CodexModelUnlocker` | `.app` 的启动入口，选择 Codex 内置 Node.js |
 | `injector.mjs` | 读取模型、启动 Codex、连接本机 CDP 并维护注入状态 |
 | `injection.js` | 在模型菜单出现时补充白名单与自定义模型选项 |
+| `models.json` | 自定义模型 ID 与界面显示名配置 |
 | `Info.plist` | macOS 应用元数据 |
 | `AppIcon.svg` | 应用图标源文件 |
 | `build.sh` | 生成并临时签名 `.app` |
@@ -70,7 +79,7 @@ OUTPUT_DIR="$HOME/Desktop" ./build.sh
 构建后可以直接运行内部注入器并输出日志：
 
 ```zsh
-"dist/Codex 模型解锁器.app/Contents/MacOS/CodexModelUnlocker" --verbose
+"dist/ChatGPT自定义模型.app/Contents/MacOS/CodexModelUnlocker" --verbose
 ```
 
 运行日志和锁文件分别位于：
@@ -80,7 +89,7 @@ OUTPUT_DIR="$HOME/Desktop" ./build.sh
 
 ## 卸载
 
-退出 Codex 后删除 `Codex 模型解锁器.app` 即可。需要清理运行记录时，再删除上面的日志和应用支持目录。
+先停止模型解锁器，再完全退出 ChatGPT/Codex 并重新打开，确认此前注入的模型已经全部消失，然后删除 `ChatGPT自定义模型.app`。需要清理运行记录时，再删除上面的日志和应用支持目录。
 
 ## 兼容性说明
 

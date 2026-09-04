@@ -1,0 +1,8 @@
+{
+  "models": [
+    {
+      "id": "gpt-6-astra",
+      "displayName": "GPT-6 Astra"
+    }
+  ]
+}

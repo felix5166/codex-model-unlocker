@@ -3,13 +3,25 @@ set -euo pipefail
 
 SOURCE_DIR="$(cd "$(dirname "$0")" && pwd)"
 OUTPUT_DIR="${OUTPUT_DIR:-$SOURCE_DIR/dist}"
-APP="$OUTPUT_DIR/Codex 模型解锁器.app"
+APP="$OUTPUT_DIR/ChatGPT自定义模型.app"
 CONTENTS="$APP/Contents"
 ICON_WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/codex-model-unlocker.XXXXXX")"
 ICONSET="$ICON_WORK_DIR/AppIcon.iconset"
 MASTER_ICON="$ICON_WORK_DIR/AppIcon-1024.png"
 
 trap 'rm -rf "$ICON_WORK_DIR"' EXIT
+
+is_app_running() {
+  /bin/ps -axo pid=,args= | /usr/bin/awk -v app="$APP" -v self="$$" '
+    $1 != self && index($0, app "/Contents/Resources/injector.mjs") { found = 1 }
+    END { exit(found ? 0 : 1) }
+  '
+}
+
+if [[ -d "$APP" ]] && is_app_running; then
+  print -u2 -- "检测到正在运行的模型解锁器，请先退出插件后再构建。"
+  exit 1
+fi
 
 rm -rf "$APP"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources" "$ICONSET"
@@ -18,6 +30,7 @@ cp "$SOURCE_DIR/Info.plist" "$CONTENTS/Info.plist"
 cp "$SOURCE_DIR/CodexModelUnlocker" "$CONTENTS/MacOS/CodexModelUnlocker"
 cp "$SOURCE_DIR/injector.mjs" "$CONTENTS/Resources/injector.mjs"
 cp "$SOURCE_DIR/injection.js" "$CONTENTS/Resources/injection.js"
+cp "$SOURCE_DIR/models.json" "$CONTENTS/Resources/models.json"
 chmod 755 "$CONTENTS/MacOS/CodexModelUnlocker"
 
 /usr/bin/qlmanage -t -s 1024 -o "$ICON_WORK_DIR" "$SOURCE_DIR/AppIcon.svg" >/dev/null 2>&1

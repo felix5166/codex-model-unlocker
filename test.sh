@@ -18,6 +18,7 @@ fi
 "$NODE" --check "$SOURCE_DIR/injection.js"
 /bin/zsh -n "$SOURCE_DIR/CodexModelUnlocker"
 /bin/zsh -n "$SOURCE_DIR/build.sh"
+/bin/bash -n "$SOURCE_DIR/local-release.sh"
 /usr/bin/plutil -lint "$SOURCE_DIR/Info.plist"
 
 print -- "源码检查通过。"

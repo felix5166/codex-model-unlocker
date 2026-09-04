@@ -2,17 +2,40 @@
   "use strict";
 
   const BOOT_MODELS = [];
-  const VERSION = "0.1.2";
+  const VERSION = "0.1.18";
   const GLOBAL_KEY = "__CODEX_MODEL_UNLOCKER__";
   const STATSIG_MODEL_CONFIG = "107580212";
+  const modelListRequestIds = new Set();
+  const appServerModulePromises = new Map();
+  const appServerModuleFailures = new Map();
+  const APP_SERVER_RETRY_COOLDOWN_MS = 3000;
+  let appServerPatchMisses = 0;
+  let appServerPatchCandidates = 0;
+  let appServerPatchPatched = 0;
 
-  const uniqueModelNames = (values) => Array.from(new Set(
-    values
-      .filter((value) => typeof value === "string")
-      .map((value) => value.trim())
-      .filter(Boolean),
-  ));
+  const normalizeModel = (value) => {
+    const id = typeof value === "string" ? value : value?.id || value?.model || value?.slug;
+    if (typeof id !== "string" || !id.trim()) return null;
+    return {
+      id: id.trim(),
+      displayName: typeof value === "object" && typeof value.displayName === "string" && value.displayName.trim()
+        ? value.displayName.trim()
+        : id.trim(),
+    };
+  };
+  const uniqueModels = (values) => {
+    const models = new Map();
+    for (const value of values) {
+      const model = normalizeModel(value);
+      if (model) models.set(model.id, model);
+    }
+    return [...models.values()];
+  };
+  const modelIds = (models) => models.map((model) => model.id);
 
+  if (window[GLOBAL_KEY] && window[GLOBAL_KEY].version !== VERSION) {
+    try { window[GLOBAL_KEY].dispose?.(); } catch (error) { /* stale state is best-effort cleanup */ }
+  }
   if (window[GLOBAL_KEY]?.version === VERSION) {
     window[GLOBAL_KEY].update(BOOT_MODELS);
     return {
@@ -23,14 +46,22 @@
     };
   }
 
+  const initialModels = uniqueModels(BOOT_MODELS);
   const state = {
     version: VERSION,
-    models: uniqueModelNames(BOOT_MODELS),
-    selectedModel: uniqueModelNames(BOOT_MODELS)[0] || "",
+    models: initialModels,
     installedAt: Date.now(),
     failures: [],
     refreshTimer: null,
     refreshUntil: 0,
+    interval: null,
+    observer: null,
+    domReadyListener: null,
+    responsePatch: null,
+    dispatchPatch: null,
+    statsigPatches: [],
+    appServerPatches: [],
+    disposed: false,
   };
 
   const recordFailure = (scope, error) => {
@@ -42,12 +73,13 @@
     if (state.failures.length > 30) state.failures.shift();
   };
 
-  const modelDescriptor = (name) => ({
-    id: name,
-    model: name,
-    slug: name,
-    name,
-    displayName: name,
+  const modelDescriptor = (model) => ({
+    id: model.id,
+    model: model.id,
+    slug: model.id,
+    name: model.id,
+    displayName: model.displayName,
+    display_name: model.displayName,
     description: "Custom relay model",
     hidden: false,
     isDefault: false,
@@ -67,6 +99,8 @@
     upgrade: null,
     upgradeInfo: null,
     availabilityNux: null,
+    modelSpecialty: null,
+    multiAgentVersion: "v2",
   });
 
   const patchStatsigConfig = (config) => {
@@ -77,7 +111,7 @@
       ? [...value.available_models]
       : [];
     let changed = false;
-    for (const name of state.models) {
+    for (const name of modelIds(state.models)) {
       if (!available.includes(name)) {
         available.push(name);
         changed = true;
@@ -85,12 +119,409 @@
     }
     if (!changed) return config;
 
-    const nextValue = { ...value, available_models: available };
+    const nextValue = {
+      ...value,
+      available_models: available,
+      default_model: value.default_model || modelIds(state.models)[0],
+    };
     try {
       config.value = nextValue;
       return config;
     } catch {
       return { ...config, value: nextValue };
+    }
+  };
+
+  const modelArrayLooksPatchable = (value, allowEmpty = false) => (
+    Array.isArray(value)
+    && (allowEmpty || value.length > 0)
+    && value.every((item) => item && typeof item === "object"
+      && typeof item.model === "string")
+  );
+
+  const patchModelArray = (list, allowEmpty = false) => {
+    if (!modelArrayLooksPatchable(list, allowEmpty)) return false;
+    let changed = false;
+    const existing = new Map(list.map((item) => [item.model, item]));
+    const customItems = [];
+    for (const model of state.models) {
+      const item = existing.get(model.id);
+      if (item) {
+        if (item.hidden !== false) { item.hidden = false; changed = true; }
+        if (item.displayName !== model.displayName) { item.displayName = model.displayName; changed = true; }
+        if (item.display_name !== model.displayName) { item.display_name = model.displayName; changed = true; }
+        customItems.push(item);
+      } else {
+        customItems.push(modelDescriptor(model));
+      }
+    }
+    const expectedPrefix = customItems.map((item) => item.model);
+    const hasExpectedPrefix = expectedPrefix.every((id, index) => (
+      list[index]?.model === id
+    ));
+    if (!hasExpectedPrefix) {
+      const customIds = new Set(expectedPrefix);
+      for (let index = list.length - 1; index >= 0; index -= 1) {
+        if (customIds.has(list[index]?.model)) list.splice(index, 1);
+      }
+      list.unshift(...customItems);
+      changed = true;
+    }
+    return changed;
+  };
+
+  const patchModelNames = (list) => {
+    if (!Array.isArray(list) || !list.every((item) => typeof item === "string")) return false;
+    let changed = false;
+    for (const name of modelIds(state.models)) {
+      if (!list.includes(name)) { list.push(name); changed = true; }
+    }
+    return changed;
+  };
+
+  const patchModelContainer = (value) => {
+    if (!value || typeof value !== "object") return false;
+    let changed = false;
+    const patch = (list, allowEmpty = false) => {
+      if (patchModelArray(list, allowEmpty)) changed = true;
+    };
+    const allowEmptyModels = ["defaultModel", "default_model", "availableModels", "available_models"]
+      .some((key) => key in value);
+    patch(value.models, allowEmptyModels);
+    if (patchModelNames(value.models)) changed = true;
+    patch(value.data);
+    patch(value.result);
+    patch(value.pages?.[0]?.data);
+    patch(value.result?.data);
+    patch(value.result?.models);
+    patch(value.message?.result?.data);
+    patch(value.message?.result?.models);
+    const names = modelIds(state.models);
+    for (const key of ["availableModels", "available_models"]) {
+      if (Array.isArray(value[key])) {
+        for (const name of names) {
+          if (!value[key].includes(name)) { value[key].push(name); changed = true; }
+        }
+      }
+    }
+    for (const key of ["hiddenModels", "hidden_models"]) {
+      if (!Array.isArray(value[key])) continue;
+      const filtered = value[key].filter((name) => !names.includes(name));
+      if (filtered.length !== value[key].length) { value[key] = filtered; changed = true; }
+    }
+    return changed;
+  };
+
+  const patchModelPayload = (value, allowEmpty = true) => (
+    Array.isArray(value) ? patchModelArray(value, allowEmpty) : patchModelContainer(value)
+  );
+
+  // The model picker gets its data from the app-server query, not fetch().
+  // Assets can carry a cache-busting query string, and the optional module is
+  // sometimes only referenced by a loaded application bundle.
+  const assetUrls = () => [...new Set([
+    ...[...document.scripts || []].map((script) => script.src),
+    ...Array.from(document.querySelectorAll?.("link[href]") || []).map((link) => link.href),
+    ...performance.getEntriesByType("resource").map((entry) => entry.name),
+  ].filter((url) => {
+    if (!url || typeof url !== "string" || !url.includes("/assets/")) return false;
+    return url.split(/[?#]/, 1)[0].endsWith(".js");
+  }))];
+
+  const appAssetUrl = (namePart) => assetUrls().find((url) => url.includes(namePart)) || "";
+
+  const APP_SERVER_ASSET_PARTS = ["app-server-manager-signals-", "use-host-config-"];
+  let appAssetTextScanPromise = null;
+  let appAssetTextScanAt = 0;
+  const resolveAssetReference = (reference, source) => {
+    const sourceUrl = new URL(source);
+    if (reference.startsWith("./assets/") && sourceUrl.pathname.includes("/assets/")) {
+      const assetsRoot = sourceUrl.pathname.slice(0, sourceUrl.pathname.lastIndexOf("/assets/") + 1);
+      const baseUrl = new URL(sourceUrl.href);
+      baseUrl.pathname = assetsRoot;
+      baseUrl.search = "";
+      baseUrl.hash = "";
+      return new URL(reference.slice(2), baseUrl).href;
+    }
+    return new URL(reference, sourceUrl).href;
+  };
+  const scanAppAssetScriptText = async () => {
+    const found = new Map();
+    const candidates = assetUrls().sort((left, right) => {
+      const score = (url) => /app-initial|app-main|page-|chatg|signals|server-manager/i.test(url) ? 0 : 1;
+      return score(left) - score(right) || right.length - left.length;
+    }).slice(0, 16);
+    for (const source of candidates) {
+      try {
+        const response = await fetch(source);
+        if (!response.ok) continue;
+        const text = await response.text();
+        for (const namePart of APP_SERVER_ASSET_PARTS) {
+          if (found.has(namePart)) continue;
+          const escaped = namePart.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const patterns = [
+            new RegExp(`["'](\\./(?:assets/)?${escaped}[^"']+\\.js(?:[?#][^"']*)?)["']`),
+            new RegExp(`["'](\\.?/assets/${escaped}[^"']+\\.js(?:[?#][^"']*)?)["']`),
+            new RegExp(`["']([^"']*/assets/${escaped}[^"']+\\.js(?:[?#][^"']*)?)["']`),
+          ];
+          for (const pattern of patterns) {
+            const match = text.match(pattern);
+            if (match) {
+              found.set(namePart, resolveAssetReference(match[1], source));
+              break;
+            }
+          }
+        }
+      } catch {
+        // A stale or cross-origin resource must not break the main renderer.
+      }
+    }
+    return found;
+  };
+
+  const appAssetUrlFromScriptText = async (namePart) => {
+    if (!appAssetTextScanPromise || Date.now() - appAssetTextScanAt >= APP_SERVER_RETRY_COOLDOWN_MS) {
+      appAssetTextScanAt = Date.now();
+      appAssetTextScanPromise = scanAppAssetScriptText().catch(() => new Map());
+    }
+    const found = await appAssetTextScanPromise;
+    return found.get(namePart) || "";
+  };
+
+  const appServerFallbackAssetUrls = () => assetUrls()
+    .filter((url) => /use-host-config|app-server-manager-signals|app-initial|app-main|page-|chatg|signals|server-manager|gwqc41kz|c1urrgy0|hsvsqcnf/i.test(url))
+    .sort((left, right) => {
+      const score = (url) => {
+        if (/use-host-config/i.test(url)) return 0;
+        if (/app-server-manager-signals/i.test(url)) return 1;
+        if (/gwqc41kz|c1urrgy0|hsvsqcnf/i.test(url)) return 2;
+        if (/app-initial.*app-main/i.test(url)) return 3;
+        if (/app-main/i.test(url)) return 4;
+        return 5;
+      };
+      return score(left) - score(right) || right.length - left.length;
+    }).slice(0, 16);
+
+  const loadAppModule = async (namePart) => {
+    const failure = appServerModuleFailures.get(namePart);
+    if (failure && Date.now() - failure.at < APP_SERVER_RETRY_COOLDOWN_MS) throw failure.error;
+    if (!appServerModulePromises.has(namePart)) {
+      const promise = Promise.resolve().then(async () => {
+        const directUrl = appAssetUrl(namePart) || await appAssetUrlFromScriptText(namePart);
+        if (!directUrl) throw new Error(`未找到内部模块: ${namePart}`);
+        return import(directUrl);
+      }).then((module) => {
+        appServerModuleFailures.delete(namePart);
+        return module;
+      }).catch((error) => {
+        appServerModulePromises.delete(namePart);
+        appServerModuleFailures.set(namePart, { at: Date.now(), error });
+        throw error;
+      });
+      appServerModulePromises.set(namePart, promise);
+    }
+    return appServerModulePromises.get(namePart);
+  };
+
+  const collectAppServerCandidates = (module) => {
+    const candidates = [];
+    const seen = new Set();
+    const push = (value) => {
+      if (!value || typeof value !== "object" || seen.has(value)) return;
+      seen.add(value);
+      candidates.push(value);
+    };
+    for (const value of Object.values(module || {})) {
+      push(value);
+      if (!value || typeof value !== "object") continue;
+      if (typeof value.get === "function") {
+        try { push(value.get()); } catch {}
+        try { push(value.get("local")); } catch {}
+      }
+      try { for (const nested of Object.values(value).slice(0, 100)) push(nested); } catch {}
+    }
+    return candidates;
+  };
+
+  const loadAppServerModules = async () => {
+    const modules = [];
+    const seen = new Set();
+    const push = (module) => {
+      if (!module || typeof module !== "object" || seen.has(module)) return;
+      seen.add(module);
+      modules.push(module);
+    };
+    try { push(await loadAppModule("app-server-manager-signals-")); } catch {}
+    try { push(await loadAppModule("use-host-config-")); } catch {}
+    for (const url of appServerFallbackAssetUrls()) {
+      try { push(await import(url)); } catch {}
+    }
+    return modules;
+  };
+
+  const appServerMethod = (method, params) => (
+    method === "send-cli-request-for-host" && params?.method
+      ? String(params.method)
+      : String(method || "")
+  );
+
+  const APP_SERVER_MODEL_METHODS = new Set(["model/list", "list-models-for-host"]);
+  const patchAppServerResult = (method, result) => {
+    if (!APP_SERVER_MODEL_METHODS.has(method)) return result;
+    patchModelPayload(result);
+    if (result && typeof result === "object" && Array.isArray(result.data)) {
+      patchModelArray(result.data, true);
+    }
+    return result;
+  };
+
+  const patchAppServerClient = (client) => {
+    if (!client || typeof client.sendRequest !== "function") return false;
+    if (client.__codexModelUnlockerPatched === VERSION) return true;
+    const previousOriginal = client.__codexModelUnlockerOriginal;
+    if (previousOriginal && client.__codexModelUnlockerPatched !== VERSION) {
+      try { client.sendRequest = previousOriginal; } catch {}
+    }
+    const original = previousOriginal || client.sendRequest.bind(client);
+    client.__codexModelUnlockerOriginal = original;
+    const wrapper = async (method, params, options) => {
+      const result = await original(method, params, options);
+      return patchAppServerResult(appServerMethod(String(method || ""), params), result);
+    };
+    client.sendRequest = wrapper;
+    client.__codexModelUnlockerPatched = VERSION;
+    client.__codexModelUnlockerWrapper = wrapper;
+    state.appServerPatches.push({ client, original, wrapper });
+    return true;
+  };
+
+  let appServerPatchPromise = null;
+  const installAppServerPatch = () => {
+    if (state.disposed || appServerPatchPromise) return;
+    appServerPatchPromise = loadAppServerModules().then((modules) => {
+      if (state.disposed) return;
+      let count = 0;
+      appServerPatchCandidates = modules.reduce((total, module) => total + Object.keys(module || {}).length, 0);
+      for (const module of modules) {
+        for (const candidate of collectAppServerCandidates(module)) {
+          if (patchAppServerClient(candidate)) count += 1;
+        }
+      }
+      if (count === 0) appServerPatchMisses += 1;
+      else {
+        appServerPatchMisses = 0;
+        appServerPatchPatched = count;
+      }
+    }).catch(() => {
+      if (!state.disposed) appServerPatchMisses += 1;
+    }).finally(() => {
+      appServerPatchPromise = null;
+    });
+  };
+
+  const patchReactObjectGraph = (root, visited = new WeakSet(), depth = 0) => {
+    if (!root || typeof root !== "object" || visited.has(root) || depth > 10) return false;
+    visited.add(root);
+    let changed = patchModelContainer(root);
+    for (const key of Object.keys(root)) {
+      if (["ownerDocument", "parentElement", "parentNode", "children", "childNodes"].includes(key)) continue;
+      try {
+        if (patchReactObjectGraph(root[key], visited, depth + 1)) changed = true;
+      } catch {
+      }
+    }
+    return changed;
+  };
+
+  const installModelResponsePatch = () => {
+    const previous = window.__codexModelUnlockerResponsePatch;
+    if (previous?.version === VERSION) return;
+    previous?.dispose?.();
+    const originalJson = Response.prototype.json;
+    if (typeof originalJson !== "function") return;
+    const wrapper = async function (...args) {
+      const payload = await originalJson.apply(this, args);
+      const url = String(this.url || "");
+      if (/\/models(?:\/|\?|$)|model\/list|list-models-for-host/i.test(url)) patchModelPayload(payload);
+      return payload;
+    };
+    const record = {
+      version: VERSION,
+      original: originalJson,
+      wrapper,
+      dispose: () => {
+        if (Response.prototype.json === wrapper) Response.prototype.json = originalJson;
+      },
+    };
+    Response.prototype.json = wrapper;
+    window.__codexModelUnlockerResponsePatch = record;
+    state.responsePatch = record;
+  };
+
+  const patchMcpModelResponse = (data) => {
+    if (data?.type !== "mcp-response") return false;
+    const message = data.message || data.response;
+    const requestId = message?.id != null ? String(message.id) : "";
+    if (modelListRequestIds.size > 0 && !modelListRequestIds.has(requestId)) return false;
+    modelListRequestIds.delete(requestId);
+    let changed = false;
+    for (const value of [data, message, message?.result, message?.result?.data, message?.result?.models]) {
+      if (patchModelPayload(value)) changed = true;
+    }
+    return changed;
+  };
+
+  const installModelListMessagePatch = () => {
+    const previous = window.__codexModelUnlockerMessagePatch;
+    if (previous?.version === VERSION) return;
+    previous?.dispose?.();
+    const originalDispatchEvent = window.dispatchEvent;
+    const dispatchWrapper = function (event) {
+      try {
+        const request = event?.detail?.request;
+        if (event?.type === "codex-message-from-view"
+          && event.detail?.type === "mcp-request" && request?.method === "model/list") {
+          request.params = { ...(request.params || {}), includeHidden: true };
+          if (request.id != null) modelListRequestIds.add(String(request.id));
+        }
+        if (event?.type === "message") patchMcpModelResponse(event.data);
+      } catch (error) {
+        recordFailure("model-list-message", error);
+      }
+      return Reflect.apply(originalDispatchEvent, window, [event]);
+    };
+    const messageListener = (event) => {
+      try { patchMcpModelResponse(event.data); } catch (error) { recordFailure("model-list-response", error); }
+    };
+    window.dispatchEvent = dispatchWrapper;
+    window.addEventListener("message", messageListener, true);
+    const record = {
+      version: VERSION,
+      original: originalDispatchEvent,
+      wrapper: dispatchWrapper,
+      listener: messageListener,
+      dispose: () => {
+        window.removeEventListener("message", messageListener, true);
+        if (window.dispatchEvent === dispatchWrapper) window.dispatchEvent = originalDispatchEvent;
+      },
+    };
+    window.__codexModelUnlockerMessagePatch = record;
+    state.dispatchPatch = record;
+  };
+
+  const patchReactState = () => {
+    const roots = [...document.querySelectorAll(
+      "[role='menu'], [role='listbox'], [data-radix-popper-content-wrapper], [data-model-picker-view], [data-model-picker-view-toggle]",
+    )];
+    for (const root of roots.slice(0, 180)) {
+      for (const key of Object.keys(root)) {
+        if (!key.startsWith("__react")) continue;
+        let fiber = root[key];
+        for (let depth = 0; fiber && depth < 20; depth += 1, fiber = fiber.return) {
+          patchReactObjectGraph(fiber.memoizedProps);
+          patchReactObjectGraph(fiber.pendingProps);
+        }
+      }
     }
   };
 
@@ -113,10 +544,18 @@
     let patched = false;
     for (const client of statsigClients()) {
       if (typeof client.getDynamicConfig !== "function") continue;
-      if (!client.__codexModelUnlockerPatched) {
-        const original = client.getDynamicConfig.bind(client);
-        client.getDynamicConfig = (name, options) => patchStatsigConfig(original(name, options));
-        client.__codexModelUnlockerPatched = true;
+      if (client.__codexModelUnlockerPatched !== VERSION) {
+        const previousOriginal = client.__codexModelUnlockerOriginal;
+        if (previousOriginal) {
+          try { client.getDynamicConfig = previousOriginal; } catch {}
+        }
+        const original = previousOriginal || client.getDynamicConfig.bind(client);
+        const wrapper = (name, options) => patchStatsigConfig(original(name, options));
+        client.getDynamicConfig = wrapper;
+        client.__codexModelUnlockerOriginal = original;
+        client.__codexModelUnlockerWrapper = wrapper;
+        client.__codexModelUnlockerPatched = VERSION;
+        state.statsigPatches.push({ client, original, wrapper });
         patched = true;
       }
       try {
@@ -130,129 +569,10 @@
     return patched;
   };
 
-  const modelDisplayName = (name) => String(name || "")
-    .replace(/^gpt-/i, "GPT-")
-    .replace(/-(sol|terra|luna)$/i, (_, suffix) => ` ${suffix[0].toUpperCase()}${suffix.slice(1).toLowerCase()}`);
-
-  const modelSelectContext = (element) => {
-    const fiberKey = Object.keys(element || {}).find((key) => key.startsWith("__reactFiber"));
-    let fiber = fiberKey ? element[fiberKey] : null;
-    for (let depth = 0; fiber && depth < 35; depth += 1, fiber = fiber.return) {
-      const props = fiber.pendingProps;
-      if (props?.modelOption && typeof props.onSelect === "function") {
-        return {
-          onSelect: props.onSelect,
-          modelOption: props.modelOption,
-          selectedModel: props.selectedModel,
-          selectedReasoningEffort: props.selectedReasoningEffort,
-        };
-      }
-    }
-    return null;
-  };
-
-  const replaceModelText = (element, fromValues, toValue) => {
-    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-    const normalized = fromValues.map((value) => String(value || "").trim()).filter(Boolean);
-    let node = walker.nextNode();
-    while (node) {
-      const text = String(node.nodeValue || "").trim();
-      if (normalized.includes(text)) node.nodeValue = String(node.nodeValue).replace(text, toValue);
-      node = walker.nextNode();
-    }
-  };
-
-  const selectCustomModel = (event, name, context) => {
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation?.();
-
-    const now = Date.now();
-    if (state.lastSelection?.name === name && now - state.lastSelection.at < 500) return;
-    state.lastSelection = { name, at: now };
-    state.selectedModel = name;
-
-    const effort = context.selectedReasoningEffort
-      || modelDescriptor(name).defaultReasoningEffort;
-    context.onSelect(name, effort);
-    window.setTimeout(() => {
-      patchSelectedModelLabels();
-      refreshBurst(1500);
-    }, 0);
-  };
-
-  const patchCustomModelMenus = () => {
-    let changed = false;
-    for (const menu of document.querySelectorAll("[role='menu']")) {
-      const items = [...menu.querySelectorAll("[role='menuitem']")];
-      const sample = items.find((item) => modelSelectContext(item));
-      if (!sample) continue;
-
-      const context = modelSelectContext(sample);
-      if (!context) continue;
-      state.selectedModel = context.selectedModel || state.selectedModel;
-
-      for (const name of [...state.models].reverse()) {
-        if (menu.querySelector(`[data-codex-model-unlocker-row="${CSS.escape(name)}"]`)) continue;
-        if (items.some((item) => modelSelectContext(item)?.modelOption?.model === name)) continue;
-
-        const clone = sample.cloneNode(true);
-        const displayName = modelDisplayName(name);
-        clone.removeAttribute("id");
-        clone.removeAttribute("data-highlighted");
-        clone.setAttribute("data-codex-model-unlocker-row", name);
-        clone.setAttribute("aria-label", displayName);
-        clone.setAttribute("data-model-selected", context.selectedModel === name ? "true" : "false");
-        replaceModelText(
-          clone,
-          [context.modelOption.displayName, context.modelOption.model],
-          displayName,
-        );
-
-        clone.addEventListener("pointerdown", (event) => selectCustomModel(event, name, context), true);
-        clone.addEventListener("click", (event) => selectCustomModel(event, name, context), true);
-        clone.addEventListener("keydown", (event) => {
-          if (event.key === "Enter" || event.key === " ") selectCustomModel(event, name, context);
-        }, true);
-        sample.parentNode?.insertBefore(clone, sample);
-        changed = true;
-      }
-    }
-    return changed;
-  };
-
-  const patchSelectedModelLabels = () => {
-    const name = state.selectedModel;
-    if (!state.models.includes(name)) return false;
-    const displayName = modelDisplayName(name);
-    let changed = false;
-
-    const candidates = [
-      document.querySelector("[data-codex-intelligence-trigger='true']"),
-      ...document.querySelectorAll("[role='menuitem'][aria-label^='Model '], [role='menuitem'][aria-label^='模型 ']")
-    ].filter(Boolean);
-
-    for (const candidate of candidates) {
-      const walker = document.createTreeWalker(candidate, NodeFilter.SHOW_TEXT);
-      let node = walker.nextNode();
-      while (node) {
-        const text = String(node.nodeValue || "").trim().toLowerCase();
-        if (text === "custom" || text === "自定义") {
-          node.nodeValue = String(node.nodeValue).replace(String(node.nodeValue).trim(), displayName);
-          changed = true;
-        }
-        node = walker.nextNode();
-      }
-    }
-    return changed;
-  };
-
   const refreshOnce = () => {
     patchStatsig();
-    let changed = false;
-    if (patchCustomModelMenus()) changed = true;
-    if (patchSelectedModelLabels()) changed = true;
-    return changed;
+    patchReactState();
+    installAppServerPatch();
   };
 
   const refreshBurst = (durationMs = 3000) => {
@@ -274,22 +594,79 @@
   };
 
   state.update = (models) => {
-    state.models = uniqueModelNames(models);
+    if (state.disposed) return state.models;
+    state.models = uniqueModels(models);
     refreshBurst(3500);
     return state.models;
   };
-  state.refresh = () => refreshBurst(3500);
+  state.refresh = () => {
+    if (!state.disposed) refreshBurst(3500);
+  };
   state.diagnostics = () => ({
     version: state.version,
-    models: [...state.models],
+    models: state.models.map((model) => ({ ...model })),
     installedAt: state.installedAt,
     failures: [...state.failures],
     statsigClients: statsigClients().length,
-    selectedModel: state.selectedModel,
-    injectedRows: document.querySelectorAll("[data-codex-model-unlocker-row]").length,
+    appServerPatch: {
+      disabled: false,
+      misses: appServerPatchMisses,
+      candidates: appServerPatchCandidates,
+      patched: appServerPatchPatched,
+    },
+    disposed: state.disposed,
   });
 
+  state.dispose = () => {
+    if (state.disposed) return;
+    state.disposed = true;
+    if (state.interval != null) window.clearInterval(state.interval);
+    if (state.refreshTimer != null) window.clearTimeout(state.refreshTimer);
+    state.interval = null;
+    state.refreshTimer = null;
+    state.observer?.disconnect?.();
+    state.observer = null;
+    if (state.domReadyListener) {
+      document.removeEventListener("DOMContentLoaded", state.domReadyListener);
+      state.domReadyListener = null;
+    }
+    const responsePatch = state.responsePatch;
+    if (responsePatch && Response.prototype.json === responsePatch.wrapper) {
+      Response.prototype.json = responsePatch.original;
+    }
+    if (window.__codexModelUnlockerResponsePatch === responsePatch) {
+      delete window.__codexModelUnlockerResponsePatch;
+    }
+    const dispatchPatch = state.dispatchPatch;
+    dispatchPatch?.dispose?.();
+    if (window.__codexModelUnlockerMessagePatch === dispatchPatch) {
+      delete window.__codexModelUnlockerMessagePatch;
+    }
+    for (const { client, original, wrapper } of state.statsigPatches) {
+      if (client.getDynamicConfig === wrapper) client.getDynamicConfig = original;
+      if (client.__codexModelUnlockerWrapper === wrapper) delete client.__codexModelUnlockerWrapper;
+      if (client.__codexModelUnlockerOriginal === original) delete client.__codexModelUnlockerOriginal;
+      if (client.__codexModelUnlockerPatched === VERSION) delete client.__codexModelUnlockerPatched;
+    }
+    for (const { client, original, wrapper } of state.appServerPatches) {
+      if (client.sendRequest === wrapper) client.sendRequest = original;
+      if (client.__codexModelUnlockerWrapper === wrapper) delete client.__codexModelUnlockerWrapper;
+      if (client.__codexModelUnlockerOriginal === original) delete client.__codexModelUnlockerOriginal;
+      if (client.__codexModelUnlockerPatched === VERSION) delete client.__codexModelUnlockerPatched;
+    }
+    state.statsigPatches.length = 0;
+    state.appServerPatches.length = 0;
+    modelListRequestIds.clear();
+    appServerModulePromises.clear();
+    appServerModuleFailures.clear();
+    appAssetTextScanPromise = null;
+    if (window[GLOBAL_KEY] === state) delete window[GLOBAL_KEY];
+  };
+
   window[GLOBAL_KEY] = state;
+  installModelResponsePatch();
+  installModelListMessagePatch();
+  installAppServerPatch();
 
   const startObserver = () => {
     if (!document.documentElement || state.observer) return;
@@ -310,20 +687,16 @@
 
   startObserver();
   if (!state.observer) {
-    document.addEventListener("DOMContentLoaded", startObserver, { once: true });
+    state.domReadyListener = startObserver;
+    document.addEventListener("DOMContentLoaded", state.domReadyListener, { once: true });
   }
   state.interval = window.setInterval(refreshOnce, 1000);
-  document.addEventListener("pointerdown", (event) => {
-    const item = event.target?.closest?.("[role='menuitem']");
-    const context = item ? modelSelectContext(item) : null;
-    if (context?.modelOption?.model) state.selectedModel = context.modelOption.model;
-  }, true);
   refreshBurst(5000);
 
   return {
     installed: true,
     reused: false,
-    models: state.models,
+    models: state.models.map((model) => ({ ...model })),
     version: VERSION,
   };
 })();
