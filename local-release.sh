@@ -124,11 +124,14 @@ record_local_artifact() {
   local temporary candidate item
 
   mkdir -p "$ARTIFACT_DIR"
-  temporary="${history}.tmp.$$"
-  {
+  temporary="$(mktemp "${history}.tmp.XXXXXX")"
+  if ! {
     printf '%s\n' "$filename"
-    [[ -f "$history" ]] && cat "$history"
-  } | awk -v keep="$KEEP_RELEASES" 'NF && !seen[$0]++ && count++ < keep' > "$temporary"
+    if [[ -f "$history" ]]; then cat "$history"; fi
+  } | awk -v keep="$KEEP_RELEASES" 'NF && !seen[$0]++ && count++ < keep' > "$temporary"; then
+    rm -f "$temporary"
+    return 1
+  fi
   mv "$temporary" "$history"
 
   for candidate in "$ARTIFACT_DIR"/ChatGPT自定义模型-v*-macOS.zip; do
