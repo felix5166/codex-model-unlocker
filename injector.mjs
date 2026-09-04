@@ -5,7 +5,7 @@ import path from "node:path";
 import net from "node:net";
 import { fileURLToPath } from "node:url";
 
-const VERSION = "0.1.18";
+const VERSION = "0.1.20";
 const APP_TITLE = "ChatGPT自定义模型";
 const HOME = os.homedir();
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));

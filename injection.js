@@ -2,7 +2,7 @@
   "use strict";
 
   const BOOT_MODELS = [];
-  const VERSION = "0.1.18";
+  const VERSION = "0.1.20";
   const GLOBAL_KEY = "__CODEX_MODEL_UNLOCKER__";
   const STATSIG_MODEL_CONFIG = "107580212";
   const modelListRequestIds = new Set();
@@ -122,7 +122,6 @@
     const nextValue = {
       ...value,
       available_models: available,
-      default_model: value.default_model || modelIds(state.models)[0],
     };
     try {
       config.value = nextValue;
@@ -191,11 +190,8 @@
     if (patchModelNames(value.models)) changed = true;
     patch(value.data);
     patch(value.result);
-    patch(value.pages?.[0]?.data);
     patch(value.result?.data);
     patch(value.result?.models);
-    patch(value.message?.result?.data);
-    patch(value.message?.result?.models);
     const names = modelIds(state.models);
     for (const key of ["availableModels", "available_models"]) {
       if (Array.isArray(value[key])) {
@@ -419,20 +415,6 @@
     });
   };
 
-  const patchReactObjectGraph = (root, visited = new WeakSet(), depth = 0) => {
-    if (!root || typeof root !== "object" || visited.has(root) || depth > 10) return false;
-    visited.add(root);
-    let changed = patchModelContainer(root);
-    for (const key of Object.keys(root)) {
-      if (["ownerDocument", "parentElement", "parentNode", "children", "childNodes"].includes(key)) continue;
-      try {
-        if (patchReactObjectGraph(root[key], visited, depth + 1)) changed = true;
-      } catch {
-      }
-    }
-    return changed;
-  };
-
   const installModelResponsePatch = () => {
     const previous = window.__codexModelUnlockerResponsePatch;
     if (previous?.version === VERSION) return;
@@ -462,10 +444,10 @@
     if (data?.type !== "mcp-response") return false;
     const message = data.message || data.response;
     const requestId = message?.id != null ? String(message.id) : "";
-    if (modelListRequestIds.size > 0 && !modelListRequestIds.has(requestId)) return false;
+    if (!modelListRequestIds.has(requestId)) return false;
     modelListRequestIds.delete(requestId);
     let changed = false;
-    for (const value of [data, message, message?.result, message?.result?.data, message?.result?.models]) {
+    for (const value of [message?.result, message?.result?.data, message?.result?.models]) {
       if (patchModelPayload(value)) changed = true;
     }
     return changed;
@@ -507,22 +489,6 @@
     };
     window.__codexModelUnlockerMessagePatch = record;
     state.dispatchPatch = record;
-  };
-
-  const patchReactState = () => {
-    const roots = [...document.querySelectorAll(
-      "[role='menu'], [role='listbox'], [data-radix-popper-content-wrapper], [data-model-picker-view], [data-model-picker-view-toggle]",
-    )];
-    for (const root of roots.slice(0, 180)) {
-      for (const key of Object.keys(root)) {
-        if (!key.startsWith("__react")) continue;
-        let fiber = root[key];
-        for (let depth = 0; fiber && depth < 20; depth += 1, fiber = fiber.return) {
-          patchReactObjectGraph(fiber.memoizedProps);
-          patchReactObjectGraph(fiber.pendingProps);
-        }
-      }
-    }
   };
 
   const statsigClients = () => {
@@ -571,7 +537,6 @@
 
   const refreshOnce = () => {
     patchStatsig();
-    patchReactState();
     installAppServerPatch();
   };
 
