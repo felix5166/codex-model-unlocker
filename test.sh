@@ -16,6 +16,9 @@ fi
 
 "$NODE" --check "$SOURCE_DIR/injector.mjs"
 "$NODE" --check "$SOURCE_DIR/injection.js"
+if [[ -x "/usr/bin/clang" ]]; then
+  /usr/bin/clang -fsyntax-only -fobjc-arc "$SOURCE_DIR/StatusMenu.m"
+fi
 /bin/zsh -n "$SOURCE_DIR/CodexModelUnlocker"
 /bin/zsh -n "$SOURCE_DIR/build.sh"
 /bin/bash -n "$SOURCE_DIR/local-release.sh"

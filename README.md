@@ -6,7 +6,8 @@
 
 - 从插件内置的 `models.json` 读取模型配置：`displayName` 用于界面显示，`id` 用于客户端模型标识和实际请求。
 - 启动或重启 Codex 时启用一个随机的 Chromium 调试端口，仅监听 `127.0.0.1`。
-- 通过 CDP 在 renderer 运行时补充 Statsig 白名单、`model/list` 返回值和 React 模型状态。
+- 通过 CDP 在 renderer 运行时补充 Statsig 白名单和模型列表响应。
+- 插件启动后在 macOS 菜单栏显示状态图标，点击图标可以选择“退出”。
 - 注入只存在于当前 ChatGPT/Codex renderer 的内存中。插件停止或删除后，完全重启 ChatGPT/Codex，之前注入的模型会全部丢弃；只有再次启动插件才会重新注入。
 
 它不会修改 `ChatGPT.app`、`Codex.app`、`app.asar`、代码签名、API 密钥或历史会话。
@@ -31,8 +32,15 @@
 1. 确认 Codex 桌面端已经安装在 `/Applications/ChatGPT.app` 或 `/Applications/Codex.app`。
 2. 双击 `ChatGPT自定义模型.app`，选择“重启并解锁”。
 3. 新建任务并打开模型选择器。
+4. 需要停止插件时，点击 macOS 菜单栏中的插件图标，选择“退出”。
 
-首次打开如果被 macOS 拦截，可在 Finder 中右键应用并选择“打开”。
+首次打开如果被 macOS 拦截：
+
+1. 打开“系统设置”。
+2. 进入“隐私与安全性”。
+3. 往下滚动到“安全性”区域。
+4. 找到“ChatGPT自定义模型.app 已被阻止”，点击“仍要打开”。
+5. 输入 macOS 登录密码确认。
 
 ### 卸载
 
@@ -45,6 +53,7 @@
 | `CodexModelUnlocker` | `.app` 的启动入口，选择 Codex 内置 Node.js |
 | `injector.mjs` | 读取模型、启动 Codex、连接本机 CDP 并维护注入状态 |
 | `injection.js` | 在模型菜单出现时补充白名单与自定义模型选项 |
+| `StatusMenu.m` | 提供 macOS 菜单栏状态图标和“退出”菜单 |
 | `models.json` | 自定义模型 ID 与界面显示名配置 |
 | `Info.plist` | macOS 应用元数据 |
 | `AppIcon.svg` | 应用图标源文件 |

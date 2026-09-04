@@ -31,7 +31,10 @@ cp "$SOURCE_DIR/CodexModelUnlocker" "$CONTENTS/MacOS/CodexModelUnlocker"
 cp "$SOURCE_DIR/injector.mjs" "$CONTENTS/Resources/injector.mjs"
 cp "$SOURCE_DIR/injection.js" "$CONTENTS/Resources/injection.js"
 cp "$SOURCE_DIR/models.json" "$CONTENTS/Resources/models.json"
+/usr/bin/clang -fobjc-arc -framework AppKit "$SOURCE_DIR/StatusMenu.m" \
+  -o "$CONTENTS/Resources/ChatGPTCustomModelsStatusMenu"
 chmod 755 "$CONTENTS/MacOS/CodexModelUnlocker"
+chmod 755 "$CONTENTS/Resources/ChatGPTCustomModelsStatusMenu"
 
 /usr/bin/qlmanage -t -s 1024 -o "$ICON_WORK_DIR" "$SOURCE_DIR/AppIcon.svg" >/dev/null 2>&1
 mv "$ICON_WORK_DIR/AppIcon.svg.png" "$MASTER_ICON"

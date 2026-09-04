@@ -5,7 +5,7 @@ import path from "node:path";
 import net from "node:net";
 import { fileURLToPath } from "node:url";
 
-const VERSION = "0.1.20";
+const VERSION = "0.1.21";
 const APP_TITLE = "ChatGPT自定义模型";
 const HOME = os.homedir();
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -14,7 +14,9 @@ const STATE_PATH = path.join(SUPPORT_DIR, "state.json");
 const LOCK_PATH = path.join(SUPPORT_DIR, "launcher.lock");
 const LOG_PATH = path.join(HOME, "Library", "Logs", "CodexModelUnlocker.log");
 const MODEL_CONFIG = path.join(SCRIPT_DIR, "models.json");
+const STATUS_MENU_PATH = path.join(SCRIPT_DIR, "ChatGPTCustomModelsStatusMenu");
 const BUNDLE_ID = "com.openai.codex";
+let statusMenuProcess = null;
 
 fs.mkdirSync(SUPPORT_DIR, { recursive: true, mode: 0o700 });
 fs.mkdirSync(path.dirname(LOG_PATH), { recursive: true });
@@ -59,6 +61,25 @@ const showError = (message) => {
   log("error", message);
   if (noDialog) return;
   runAppleScript(`display alert "${APP_TITLE}" message "${quoteAppleScript(message)}" as critical`);
+};
+
+const startStatusMenu = (models) => {
+  if (statusMenuProcess || !fs.existsSync(STATUS_MENU_PATH)) return;
+  try {
+    statusMenuProcess = spawn(
+      STATUS_MENU_PATH,
+      ["--parent-pid", String(process.pid), "--models", JSON.stringify(models)],
+      { detached: true, stdio: "ignore" },
+    );
+    statusMenuProcess.once("error", (error) => {
+      log("status_menu_failed", String(error?.message || error));
+      statusMenuProcess = null;
+    });
+    statusMenuProcess.unref();
+  } catch (error) {
+    log("status_menu_failed", String(error?.message || error));
+    statusMenuProcess = null;
+  }
 };
 
 const confirmRestart = () => {
@@ -426,6 +447,7 @@ const main = async () => {
 
   log("launcher_started", { version: VERSION, appPath, port, models });
   writeState({ pid: process.pid, version: VERSION, appPath, port, models, startedAt: Date.now() });
+  startStatusMenu(models);
   await waitForTargets(port);
 
   const sessions = new Map();
@@ -513,6 +535,8 @@ let shuttingDown = false;
 const shutdown = () => {
   if (shuttingDown) return;
   shuttingDown = true;
+  try { statusMenuProcess?.kill("SIGTERM"); } catch {}
+  statusMenuProcess = null;
   cleanupState();
   releaseLock();
 };
