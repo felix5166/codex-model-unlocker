@@ -167,7 +167,7 @@ prepare_release() {
   local version="$1"
   local artifact metadata checksum notes
   local artifact_tmp metadata_tmp checksum_tmp notes_tmp
-  local commit build_date artifact_sha256
+  local dmg_source commit build_date artifact_sha256
 
   ensure_macos
   ensure_release_source "$version"
@@ -189,10 +189,13 @@ prepare_release() {
   commit="$(git -C "$SCRIPT_DIR" rev-parse HEAD)"
   build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-  trap 'rm -f "$artifact_tmp" "$metadata_tmp" "$checksum_tmp" "$notes_tmp"' EXIT
+  dmg_source="$(mktemp -d "${TMPDIR:-/tmp}/chatgpt-custom-models-dmg.XXXXXX")"
+  trap 'rm -rf "$dmg_source"; rm -f "$artifact_tmp" "$metadata_tmp" "$checksum_tmp" "$notes_tmp"' EXIT
   info "打包 macOS 应用"
+  /usr/bin/ditto "$APP_PATH" "$dmg_source/$APP_NAME"
+  /bin/ln -s /Applications "$dmg_source/Applications"
   /usr/bin/hdiutil create -quiet -ov -format UDZO \
-    -volname "ChatGPT自定义模型" -srcfolder "$APP_PATH" "$artifact_tmp"
+    -volname "ChatGPT自定义模型" -srcfolder "$dmg_source" "$artifact_tmp"
   artifact_sha256="$(shasum -a 256 "$artifact_tmp" | awk '{print $1}')"
   {
     printf 'version=%s\n' "$version"
@@ -209,6 +212,7 @@ prepare_release() {
   mv "$checksum_tmp" "$checksum"
   mv "$notes_tmp" "$notes"
   record_local_artifact "$(artifact_name "$version")"
+  rm -rf "$dmg_source"
   trap - EXIT
 
   info "已准备发布产物：$artifact"
