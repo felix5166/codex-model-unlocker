@@ -103,32 +103,49 @@
     multiAgentVersion: "v2",
   });
 
-  const patchStatsigConfig = (config) => {
-    const value = config?.value;
-    if (!value || typeof value !== "object") return config;
-
-    const available = Array.isArray(value.available_models)
-      ? [...value.available_models]
-      : [];
-    let changed = false;
-    for (const name of modelIds(state.models)) {
-      if (!available.includes(name)) {
-        available.push(name);
-        changed = true;
-      }
+  const appendConfiguredModelIds = (list) => {
+    if (!Array.isArray(list) || !list.every((item) => typeof item === "string")) return list;
+    const next = [...list];
+    for (const id of modelIds(state.models)) {
+      if (!next.includes(id)) next.push(id);
     }
-    if (!changed) return config;
+    return next.length === list.length ? list : next;
+  };
 
-    const nextValue = {
-      ...value,
-      available_models: available,
-    };
-    try {
-      config.value = nextValue;
+  const patchStatsigConfig = (name, config) => {
+    if (name !== STATSIG_MODEL_CONFIG) return config;
+    if (!config || typeof config !== "object" || Array.isArray(config)) return config;
+    const valueDescriptor = Object.getOwnPropertyDescriptor(config, "value");
+    if (!valueDescriptor || !("value" in valueDescriptor)) return config;
+    const value = valueDescriptor.value;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return config;
+    const listDescriptor = Object.getOwnPropertyDescriptor(value, "available_models");
+    if (!listDescriptor || !("value" in listDescriptor)) return config;
+    const available = appendConfiguredModelIds(listDescriptor.value);
+    if (available === listDescriptor.value) return config;
+
+    // Clone property descriptors so the SDK-owned cache is never mutated.
+    const valueDescriptors = Object.getOwnPropertyDescriptors(value);
+    valueDescriptors.available_models = { ...listDescriptor, value: available };
+    const nextValue = Object.create(Object.getPrototypeOf(value), valueDescriptors);
+    const descriptors = Object.getOwnPropertyDescriptors(config);
+    descriptors.value = { ...valueDescriptor, value: nextValue };
+
+    const getDescriptor = descriptors.get;
+    if (getDescriptor && "value" in getDescriptor && typeof getDescriptor.value === "function") {
+      const originalGet = getDescriptor.value;
+      descriptors.get = {
+        ...getDescriptor,
+        value: function (...args) {
+          const result = Reflect.apply(originalGet, config, args);
+          return args[0] === "available_models" ? appendConfiguredModelIds(result) : result;
+        },
+      };
+    } else if (typeof config.get === "function") {
+      // Prototype methods may depend on private fields bound to the original instance.
       return config;
-    } catch {
-      return { ...config, value: nextValue };
     }
+    return Object.create(Object.getPrototypeOf(config), descriptors);
   };
 
   const modelArrayLooksPatchable = (value, allowEmpty = false) => (
@@ -516,20 +533,21 @@
           try { client.getDynamicConfig = previousOriginal; } catch {}
         }
         const original = previousOriginal || client.getDynamicConfig.bind(client);
-        const wrapper = (name, options) => patchStatsigConfig(original(name, options));
+        const wrapper = (name, ...args) => {
+          const config = original(name, ...args);
+          try {
+            return patchStatsigConfig(name, config);
+          } catch (error) {
+            recordFailure("statsig-model-config", error);
+            return config;
+          }
+        };
         client.getDynamicConfig = wrapper;
         client.__codexModelUnlockerOriginal = original;
         client.__codexModelUnlockerWrapper = wrapper;
         client.__codexModelUnlockerPatched = VERSION;
         state.statsigPatches.push({ client, original, wrapper });
         patched = true;
-      }
-      try {
-        patchStatsigConfig(client.getDynamicConfig(STATSIG_MODEL_CONFIG, {
-          disableExposureLog: true,
-        }));
-      } catch (error) {
-        recordFailure("statsig-config", error);
       }
     }
     return patched;
