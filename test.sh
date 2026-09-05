@@ -16,6 +16,7 @@ fi
 
 "$NODE" --check "$SOURCE_DIR/injector.mjs"
 "$NODE" --check "$SOURCE_DIR/injection.js"
+"$NODE" --test "$SOURCE_DIR/tests"/*.test.mjs
 if [[ -x "/usr/bin/clang" ]]; then
   /usr/bin/clang -fsyntax-only -fobjc-arc "$SOURCE_DIR/StatusMenu.m"
 fi
