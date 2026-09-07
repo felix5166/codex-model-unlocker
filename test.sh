@@ -16,11 +16,11 @@ fi
 
 "$NODE" --check "$SOURCE_DIR/injector.mjs"
 "$NODE" --check "$SOURCE_DIR/injection.js"
-if [[ -x "/usr/bin/clang" ]]; then
-  /usr/bin/clang -fsyntax-only -fobjc-arc "$SOURCE_DIR/StatusMenu.m"
-fi
+"$NODE" --test "$SOURCE_DIR"/tests/*.test.mjs
+/bin/zsh "$SOURCE_DIR/swiftc.sh" -parse-as-library -target "$(uname -m)-apple-macosx13.0" -typecheck "$SOURCE_DIR/StatusMenu.swift"
 /bin/zsh -n "$SOURCE_DIR/CodexModelUnlocker"
 /bin/zsh -n "$SOURCE_DIR/build.sh"
+/bin/zsh -n "$SOURCE_DIR/swiftc.sh"
 /bin/bash -n "$SOURCE_DIR/local-release.sh"
 /usr/bin/plutil -lint "$SOURCE_DIR/Info.plist"
 

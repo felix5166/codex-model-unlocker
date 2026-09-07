@@ -4,8 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import net from "node:net";
 import { fileURLToPath } from "node:url";
+import { createInterface } from "node:readline";
+import { loadModels, handlePanelRequest } from "./model-config.mjs";
 
-const VERSION = "0.1.22";
+const VERSION = "0.1.23";
 const APP_TITLE = "ChatGPT自定义模型";
 const HOME = os.homedir();
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -13,7 +15,8 @@ const SUPPORT_DIR = path.join(HOME, "Library", "Application Support", "CodexMode
 const STATE_PATH = path.join(SUPPORT_DIR, "state.json");
 const LOCK_PATH = path.join(SUPPORT_DIR, "launcher.lock");
 const LOG_PATH = path.join(HOME, "Library", "Logs", "CodexModelUnlocker.log");
-const MODEL_CONFIG = path.join(SCRIPT_DIR, "models.json");
+const MODEL_CONFIG = path.join(SUPPORT_DIR, "models.json");
+const DEFAULT_MODELS = path.join(SCRIPT_DIR, "models.json");
 const STATUS_MENU_PATH = path.join(SCRIPT_DIR, "ChatGPTCustomModelsStatusMenu");
 const STATUS_ICON_PATH = path.join(SCRIPT_DIR, "AppIcon.icns");
 const BUNDLE_ID = "com.openai.codex";
@@ -64,14 +67,32 @@ const showError = (message) => {
   runAppleScript(`display alert "${APP_TITLE}" message "${quoteAppleScript(message)}" as critical`);
 };
 
-const startStatusMenu = () => {
+const startStatusMenu = (onRequest) => {
   if (statusMenuProcess || !fs.existsSync(STATUS_MENU_PATH) || !fs.existsSync(STATUS_ICON_PATH)) return;
   try {
     statusMenuProcess = spawn(
       STATUS_MENU_PATH,
       ["--parent-pid", String(process.pid), "--icon-path", STATUS_ICON_PATH],
-      { detached: true, stdio: "ignore" },
+      { stdio: ["pipe", "pipe", "pipe"] },
     );
+    const child = statusMenuProcess;
+    child.stdin.on("error", (error) => log("panel_pipe_failed", error.message));
+    child.stderr.on("data", (data) => log("panel_stderr", String(data).trim()));
+    const lines = createInterface({ input: child.stdout });
+    lines.on("line", (line) => {
+      try {
+        const request = JSON.parse(line);
+        onRequest(request, (result) => {
+          if (!child.stdin.destroyed) child.stdin.write(`${JSON.stringify(result)}\n`);
+        });
+      } catch (error) {
+        log("panel_request_failed", error.message);
+      }
+    });
+    child.once("exit", () => {
+      lines.close();
+      if (statusMenuProcess === child) statusMenuProcess = null;
+    });
     statusMenuProcess.once("error", (error) => {
       log("status_menu_failed", String(error?.message || error));
       statusMenuProcess = null;
@@ -81,19 +102,6 @@ const startStatusMenu = () => {
     log("status_menu_failed", String(error?.message || error));
     statusMenuProcess = null;
   }
-};
-
-const confirmRestart = () => {
-  if (noDialog) return true;
-  const result = runAppleScript([
-    `display dialog "需要重启一次 Codex 才能解锁本地模型选择器。调试端口只会绑定到 127.0.0.1。"`,
-    `with title "${APP_TITLE}"`,
-    `buttons {"取消", "重启并解锁"}`,
-    `default button "重启并解锁"`,
-    `cancel button "取消"`,
-    `with icon caution`,
-  ].join(" "));
-  return result.status === 0;
 };
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -147,10 +155,6 @@ const findApp = () => candidateApps.find((candidate) => fs.existsSync(candidate)
 const appIsRunning = (appPath) => {
   const pattern = `${appPath}/Contents/MacOS/`;
   return spawnSync("/usr/bin/pgrep", ["-f", pattern]).status === 0;
-};
-
-const bringAppToFront = (appPath) => {
-  spawnSync("/usr/bin/open", [appPath]);
 };
 
 const quitApp = async (appPath) => {
@@ -223,32 +227,6 @@ const launchApp = (appPath, port) => new Promise((resolve, reject) => {
     resolve();
   });
 });
-
-const normalizeModel = (item) => {
-  const id = typeof item === "string"
-    ? item
-    : item?.id || item?.model || item?.slug || item?.name;
-  if (typeof id !== "string") return null;
-  const normalizedId = id.trim();
-  if (!normalizedId || normalizedId.length > 160 || /[\u0000-\u001f]/.test(normalizedId)) return null;
-  const displayName = typeof item === "object" && typeof item?.displayName === "string"
-    ? item.displayName.trim()
-    : normalizedId;
-  if (!displayName || displayName.length > 160 || /[\u0000-\u001f]/.test(displayName)) return null;
-  return { id: normalizedId, displayName };
-};
-
-const loadModels = () => {
-  if (!fs.existsSync(MODEL_CONFIG)) return [];
-  const config = JSON.parse(fs.readFileSync(MODEL_CONFIG, "utf8"));
-  const configured = Array.isArray(config) ? config : config.models;
-  const models = Array.isArray(configured) ? configured.map(normalizeModel) : [];
-  const unique = new Map();
-  for (const model of models.filter(Boolean)) {
-    if (!unique.has(model.id)) unique.set(model.id, model);
-  }
-  return [...unique.values()];
-};
 
 const buildInjectionSource = (models) => {
   const template = fs.readFileSync(path.join(SCRIPT_DIR, "injection.js"), "utf8");
@@ -417,54 +395,20 @@ const waitForTargets = async (port, timeoutMs = 30_000) => {
 
 const main = async () => {
   if (!acquireLock()) {
-    const appPath = findApp();
-    if (appPath) bringAppToFront(appPath);
     notify("模型解锁已在运行");
     return;
   }
 
   const appPath = findApp();
-  if (!appPath && !attachPort) throw new Error("未找到 ChatGPT.app 或 Codex.app");
-
-  let models = loadModels();
-  if (models.length === 0) {
-    throw new Error(`模型配置中没有可用模型：${MODEL_CONFIG}`);
-  }
-
-  let port = attachPort;
-  if (!port) {
-    if (appIsRunning(appPath)) {
-      if (!confirmRestart()) {
-        log("restart_cancelled");
-        return;
-      }
-      const stopped = await quitApp(appPath);
-      if (!stopped) throw new Error("Codex 未能正常退出；请手动退出后重试");
-    }
-
-    port = await getFreePort();
-    await launchApp(appPath, port);
-  }
-
-  log("launcher_started", { version: VERSION, appPath, port, models });
-  writeState({ pid: process.pid, version: VERSION, appPath, port, models, startedAt: Date.now() });
-  startStatusMenu();
-  await waitForTargets(port);
-
+  const requests = [];
+  startStatusMenu((request, reply) => requests.push({ request, reply }));
   const sessions = new Map();
-  let source = buildInjectionSource(models);
-  let sourceKey = JSON.stringify(models);
-  let successNotified = false;
+  let models = [];
+  let port = 0;
+  let source = "";
   let appMissingSince = null;
 
-  while (true) {
-    let targets = [];
-    try {
-      targets = await fetchTargets(port);
-    } catch (error) {
-      if (runOnce) throw error;
-    }
-
+  const injectTargets = async (targets) => {
     const activeIds = new Set(targets.map((target) => target.id));
     for (const [id, session] of sessions) {
       if (!activeIds.has(id) || session.closed) {
@@ -473,7 +417,7 @@ const main = async () => {
       }
     }
 
-    let injectedThisPass = 0;
+    if (models.length === 0) return;
     for (const target of targets) {
       if (sessions.has(target.id)) continue;
       const session = new CDPSession(target);
@@ -481,7 +425,6 @@ const main = async () => {
         await session.connect();
         const result = await session.inject(source);
         sessions.set(target.id, session);
-        injectedThisPass += 1;
         log("target_injected", {
           targetId: target.id,
           title: target.title,
@@ -493,39 +436,73 @@ const main = async () => {
         log("target_injection_failed", { targetId: target.id, error: String(error?.message || error) });
       }
     }
+  };
 
-    if (!successNotified && sessions.size > 0) {
-      successNotified = true;
-      notify(`已解锁 ${models.length} 个模型：${models.map((model) => model.displayName).join(", ")}`);
-    }
-
-    if (runOnce && (injectedThisPass > 0 || sessions.size > 0)) break;
-
-    const nextModels = loadModels();
-    const nextKey = JSON.stringify(nextModels);
-    if (nextModels.length > 0 && nextKey !== sourceKey) {
-      models = nextModels;
-      sourceKey = nextKey;
-      source = buildInjectionSource(models);
-      for (const session of sessions.values()) {
-        try {
-          await session.inject(source);
-        } catch (error) {
-          log("target_reinjection_failed", String(error?.message || error));
-        }
+  const restart = async (nextModels, existingPort = 0) => {
+    if (!existingPort) {
+      if (!appPath) throw new Error("未找到 ChatGPT.app 或 Codex.app");
+      if (appIsRunning(appPath) && !await quitApp(appPath)) {
+        throw new Error("ChatGPT 未能正常退出；请稍后重试");
       }
-      writeState({ pid: process.pid, version: VERSION, appPath, port, models, startedAt: Date.now() });
-      notify(`模型目录已更新：${models.map((model) => model.displayName).join(", ")}`);
+    }
+    for (const session of sessions.values()) session.close();
+    sessions.clear();
+    port = 0;
+    appMissingSince = null;
+    models = nextModels;
+    source = models.length ? buildInjectionSource(models) : "";
+    const nextPort = existingPort || await getFreePort();
+    if (!existingPort) await launchApp(appPath, nextPort);
+    const targets = await waitForTargets(nextPort);
+    port = nextPort;
+    await injectTargets(targets);
+    if (models.length > 0 && sessions.size === 0) throw new Error("模型注入失败，请重试并检查插件日志");
+    log("launcher_started", { version: VERSION, appPath, port, models });
+    writeState({ pid: process.pid, version: VERSION, appPath, port, models, startedAt: Date.now() });
+  };
+
+  if (attachPort) {
+    try {
+      await restart(loadModels(MODEL_CONFIG, DEFAULT_MODELS), attachPort);
+    } catch (error) {
+      if (!statusMenuProcess || runOnce) throw error;
+      showError(error.message);
+    }
+  }
+
+  while (true) {
+    const pending = requests.shift();
+    if (pending) {
+      const result = await handlePanelRequest(pending.request, {
+        configPath: MODEL_CONFIG, defaultPath: DEFAULT_MODELS, restart,
+      });
+      if (!result.ok) log("panel_action_failed", result.error);
+      pending.reply(result);
     }
 
-    if (!attachPort && !appIsRunning(appPath)) {
+    if (port) {
+      try {
+        await injectTargets(await fetchTargets(port));
+      } catch (error) {
+        if (runOnce) throw error;
+      }
+    }
+    if (runOnce) break;
+
+    if (port && !attachPort && appPath && !appIsRunning(appPath)) {
       appMissingSince ??= Date.now();
-      if (Date.now() - appMissingSince > 5000) break;
+      if (Date.now() - appMissingSince > 5000) {
+        port = 0;
+        for (const session of sessions.values()) session.close();
+        sessions.clear();
+        cleanupState();
+      }
     } else {
       appMissingSince = null;
     }
 
-    await sleep(1000);
+    if (!port && !statusMenuProcess) break;
+    await sleep(250);
   }
 
   for (const session of sessions.values()) session.close();

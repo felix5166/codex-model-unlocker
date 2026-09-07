@@ -29,9 +29,11 @@ mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources" "$ICONSET"
 cp "$SOURCE_DIR/Info.plist" "$CONTENTS/Info.plist"
 cp "$SOURCE_DIR/CodexModelUnlocker" "$CONTENTS/MacOS/CodexModelUnlocker"
 cp "$SOURCE_DIR/injector.mjs" "$CONTENTS/Resources/injector.mjs"
+cp "$SOURCE_DIR/model-config.mjs" "$CONTENTS/Resources/model-config.mjs"
 cp "$SOURCE_DIR/injection.js" "$CONTENTS/Resources/injection.js"
 cp "$SOURCE_DIR/models.json" "$CONTENTS/Resources/models.json"
-/usr/bin/clang -fobjc-arc -framework AppKit "$SOURCE_DIR/StatusMenu.m" \
+/bin/zsh "$SOURCE_DIR/swiftc.sh" -parse-as-library -O -target "$(uname -m)-apple-macosx13.0" \
+  "$SOURCE_DIR/StatusMenu.swift" \
   -o "$CONTENTS/Resources/ChatGPTCustomModelsStatusMenu"
 chmod 755 "$CONTENTS/MacOS/CodexModelUnlocker"
 chmod 755 "$CONTENTS/Resources/ChatGPTCustomModelsStatusMenu"
