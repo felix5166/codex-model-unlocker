@@ -2,7 +2,7 @@
   "use strict";
 
   const BOOT_MODELS = [];
-  const VERSION = "0.1.23";
+  const VERSION = "0.1.24";
   const GLOBAL_KEY = "__CODEX_MODEL_UNLOCKER__";
   const STATSIG_MODEL_CONFIG = "107580212";
   const modelListRequestIds = new Set();
@@ -516,7 +516,12 @@
           try { client.getDynamicConfig = previousOriginal; } catch {}
         }
         const original = previousOriginal || client.getDynamicConfig.bind(client);
-        const wrapper = (name, options) => patchStatsigConfig(original(name, options));
+        const wrapper = (name, options) => {
+          const config = original(name, options);
+          return String(name) === STATSIG_MODEL_CONFIG
+            ? patchStatsigConfig(config)
+            : config;
+        };
         client.getDynamicConfig = wrapper;
         client.__codexModelUnlockerOriginal = original;
         client.__codexModelUnlockerWrapper = wrapper;
