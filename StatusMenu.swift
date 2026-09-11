@@ -2,6 +2,27 @@ import AppKit
 
 struct ModelRow: Codable, Equatable {
     var id: String
+    var context: Int
+
+    init(id: String, context: Int = 272) {
+        self.id = id
+        self.context = context
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        context = try container.decodeIfPresent(Int.self, forKey: .context) ?? 272
+    }
+}
+
+func contextConversionLabel(_ k: Int) -> String {
+    if k < 1000 { return "\(k)k" }
+    if k % 1000 == 0 { return "\(k / 1000)M" }
+    var frac = String(k % 1000)
+    while frac.count < 3 { frac = "0" + frac }
+    while frac.last == "0" { frac.removeLast() }
+    return "\(k / 1000).\(frac)M"
 }
 
 final class StatusMenuController: NSObject, NSApplicationDelegate, NSWindowDelegate,
@@ -94,16 +115,28 @@ final class StatusMenuController: NSObject, NSApplicationDelegate, NSWindowDeleg
         toolbar.spacing = 8
         toolbar.distribution = .fill
 
-        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("id"))
-        column.title = "模型 ID"
-        column.width = 640
-        column.minWidth = 200
-        table.addTableColumn(column)
+        let idColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("id"))
+        idColumn.title = "模型 ID"
+        idColumn.width = 520
+        idColumn.minWidth = 200
+        let contextColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("context"))
+        contextColumn.title = "上下文窗口"
+        contextColumn.width = 128
+        contextColumn.minWidth = 120
+        contextColumn.maxWidth = 160
+        let convertedColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("converted"))
+        convertedColumn.title = "会话大小"
+        convertedColumn.width = 96
+        convertedColumn.minWidth = 88
+        convertedColumn.maxWidth = 120
+        table.addTableColumn(idColumn)
+        table.addTableColumn(contextColumn)
+        table.addTableColumn(convertedColumn)
         table.delegate = self
         table.dataSource = self
         table.rowHeight = 36
         table.usesAlternatingRowBackgroundColors = true
-        table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        table.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         table.allowsColumnReordering = false
         table.allowsEmptySelection = true
         let scroll = NSScrollView()
@@ -111,7 +144,6 @@ final class StatusMenuController: NSObject, NSApplicationDelegate, NSWindowDeleg
         scroll.hasVerticalScroller = true
         scroll.borderType = .bezelBorder
         emptyLabel.textColor = .secondaryLabelColor
-        scroll.addSubview(emptyLabel)
 
         saveButton.target = self
         saveButton.action = #selector(save)
@@ -124,11 +156,10 @@ final class StatusMenuController: NSObject, NSApplicationDelegate, NSWindowDeleg
         feedback.font = .systemFont(ofSize: 12)
         feedback.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        for view in [toolbar, scroll, feedback, buttons] {
+        for view in [toolbar, scroll, feedback, buttons, emptyLabel] {
             view.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(view)
         }
-        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             toolbar.topAnchor.constraint(equalTo: content.topAnchor, constant: 20),
             toolbar.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 24),
@@ -167,13 +198,23 @@ final class StatusMenuController: NSObject, NSApplicationDelegate, NSWindowDeleg
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard let tableColumn else { return nil }
         let cell = NSTableCellView()
-        let field = NSTextField(string: models[row].id)
+        let kind = tableColumn.identifier.rawValue
+        let isContext = kind == "context"
+        let isConverted = kind == "converted"
+        let value = isConverted ? contextConversionLabel(models[row].context)
+            : isContext ? String(models[row].context) : models[row].id
+        let field = isConverted ? NSTextField(labelWithString: value) : NSTextField(string: value)
+        field.identifier = tableColumn.identifier
         field.tag = row
-        field.delegate = self
-        field.isEditable = !busy && loaded
+        if !isConverted {
+            field.delegate = self
+            field.isEditable = !busy && loaded
+        }
         field.isBordered = false
         field.drawsBackground = false
+        field.alignment = (isContext || isConverted) ? .right : .natural
         field.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        if isConverted { field.textColor = .secondaryLabelColor }
         field.setAccessibilityLabel("第 \(row + 1) 行\(tableColumn.title)")
         field.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(field)
@@ -190,7 +231,18 @@ final class StatusMenuController: NSObject, NSApplicationDelegate, NSWindowDeleg
         guard let field = notification.object as? NSTextField, !busy else { return }
         let row = field.tag
         guard models.indices.contains(row) else { return }
-        models[row].id = field.stringValue
+        if field.identifier?.rawValue == "context" {
+            if let value = Int(field.stringValue.trimmingCharacters(in: .whitespaces)), value >= 1 {
+                models[row].context = value
+                let convertedIndex = table.column(withIdentifier: NSUserInterfaceItemIdentifier("converted"))
+                if convertedIndex >= 0,
+                   let cell = table.view(atColumn: convertedIndex, row: row, makeIfNecessary: false) as? NSTableCellView {
+                    cell.textField?.stringValue = contextConversionLabel(value)
+                }
+            }
+        } else {
+            models[row].id = field.stringValue
+        }
         setFeedback(models == savedModels ? "" : "有未保存的更改")
         updateControls()
     }
@@ -200,7 +252,7 @@ final class StatusMenuController: NSObject, NSApplicationDelegate, NSWindowDeleg
     @objc func addModel() {
         guard loaded && !busy else { return }
         window?.makeFirstResponder(nil)
-        models.append(ModelRow(id: ""))
+        models.append(ModelRow(id: "", context: 272))
         table.reloadData()
         let row = models.count - 1
         table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
@@ -232,7 +284,7 @@ final class StatusMenuController: NSObject, NSApplicationDelegate, NSWindowDeleg
         table.reloadData()
         updateControls()
         sendRequest(["action": "save", "restart": restart,
-                     "models": models.map { ["id": $0.id] }])
+                     "models": models.map { ["id": $0.id, "context": $0.context] }])
     }
 
     func receive(_ response: [String: Any]) {

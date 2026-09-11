@@ -14,23 +14,47 @@ struct StatusMenuTests {
         var requests: [[String: Any]] = []
         controller.sendRequest = { requests.append($0) }
         controller.openPanel()
-        assert(controller.table.tableColumns.map(\.identifier.rawValue) == ["id"])
-        assert(controller.table.tableColumns.map(\.title) == ["模型 ID"])
+        assert(contextConversionLabel(200) == "200k")
+        assert(contextConversionLabel(999) == "999k")
+        assert(contextConversionLabel(1000) == "1M")
+        assert(contextConversionLabel(1500) == "1.5M")
+        assert(contextConversionLabel(1010) == "1.01M")
+        assert(contextConversionLabel(10000) == "10M")
+        assert(controller.table.tableColumns.map(\.identifier.rawValue) == ["id", "context", "converted"])
+        assert(controller.table.tableColumns.map(\.title) == ["模型 ID", "上下文窗口", "会话大小"])
         assert(requests.last?["action"] as? String == "load")
         assert(controller.busy && !controller.saveButton.isEnabled)
         let original = [["id": "gpt-6-astra"]]
         controller.receive(["ok": true, "models": original])
         assert(controller.models.first?.id == "gpt-6-astra")
+        assert(controller.models.first?.context == 272)
+        let convertedColumn = controller.table.column(withIdentifier: NSUserInterfaceItemIdentifier("converted"))
+        let convertedCell = controller.table.view(atColumn: convertedColumn, row: 0, makeIfNecessary: true) as! NSTableCellView
+        assert(convertedCell.textField?.stringValue == "272k")
+        let contextField = NSTextField(string: "10000")
+        contextField.identifier = NSUserInterfaceItemIdentifier("context")
+        contextField.tag = 0
+        controller.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: contextField))
+        assert(controller.models.first?.context == 10000)
+        assert(convertedCell.textField?.stringValue == "10M")
+        contextField.stringValue = "272"
+        controller.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: contextField))
+        assert(controller.models.first?.context == 272)
+        assert(convertedCell.textField?.stringValue == "272k")
         assert(!controller.saveButton.isEnabled && controller.restartButton.isEnabled)
         controller.addModel()
-        assert(controller.models.count == 2 && controller.saveButton.isEnabled)
+        assert(controller.models.count == 2 && controller.models.last?.context == 272 && controller.saveButton.isEnabled)
         let idField = NSTextField(string: "relay-test")
         idField.tag = 1
         controller.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: idField))
         controller.save()
         assert(requests.last?["restart"] as? Bool == false)
-        let submitted = requests.last?["models"] as! [[String: String]]
-        assert(submitted == [["id": "gpt-6-astra"], ["id": "relay-test"]])
+        let submitted = requests.last?["models"] as! [[String: Any]]
+        assert(submitted.count == 2)
+        assert(submitted[0]["id"] as? String == "gpt-6-astra")
+        assert(submitted[0]["context"] as? Int == 272)
+        assert(submitted[1]["id"] as? String == "relay-test")
+        assert(submitted[1]["context"] as? Int == 272)
         assert(controller.busy && !controller.restartButton.isEnabled)
         controller.receive(["ok": false, "error": "模型 ID 重复"])
         assert(controller.models.count == 2 && controller.saveButton.isEnabled)
@@ -54,7 +78,7 @@ struct StatusMenuTests {
         }
         assert(controller.models.isEmpty && !controller.emptyLabel.isHidden)
         controller.saveAndRestart()
-        assert((requests.last?["models"] as? [[String: String]])?.isEmpty == true)
+        assert((requests.last?["models"] as? [[String: Any]])?.isEmpty == true)
         controller.receive(["ok": true, "saved": true, "restarted": true, "models": []])
         assert(controller.windowShouldClose(controller.window!))
         controller.receive(["ok": true, "models": submitted])

@@ -5,7 +5,7 @@ import path from "node:path";
 import net from "node:net";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
-import { loadModels, handlePanelRequest } from "./model-config.mjs";
+import { loadModels, handlePanelRequest, buildCatalog, writeCatalog } from "./model-config.mjs";
 
 const VERSION = "0.1.24";
 const APP_TITLE = "ChatGPT自定义模型";
@@ -393,6 +393,57 @@ const waitForTargets = async (port, timeoutMs = 30_000) => {
   throw new Error("Timed out waiting for the Codex renderer");
 };
 
+const CODEX_HOME = path.join(HOME, ".codex");
+const USER_CONFIG = path.join(CODEX_HOME, "config.toml");
+const DEFAULT_CATALOG_PATH = path.join(CODEX_HOME, "model_catalog.json");
+
+const readBundledCatalog = (appPath) => {
+  const binary = path.join(appPath, "Contents", "Resources", "codex");
+  if (!fs.existsSync(binary)) throw new Error("未找到 Codex 可执行文件，无法读取官方模型目录");
+  const result = spawnSync(binary, ["debug", "models", "--bundled"], {
+    encoding: "utf8",
+    maxBuffer: 32 * 1024 * 1024,
+    timeout: 20_000,
+  });
+  if (result.status !== 0) {
+    throw new Error(`读取官方模型目录失败：${(result.stderr || result.stdout || "").trim() || result.status}`);
+  }
+  const text = result.stdout || "";
+  const start = text.indexOf("{");
+  if (start < 0) throw new Error("官方模型目录不是 JSON");
+  const parsed = JSON.parse(text.slice(start));
+  if (!Array.isArray(parsed?.models)) throw new Error("官方模型目录缺少 models");
+  return parsed;
+};
+
+const catalogPathFromToml = (text) => {
+  const match = text.match(/^[ \t]*model_catalog_json[ \t]*=[ \t]*"([^"]+)"/m);
+  if (!match) return null;
+  const raw = match[1].replace(/^~(?=\/)/, HOME);
+  return path.isAbsolute(raw) ? raw : path.resolve(CODEX_HOME, raw);
+};
+
+const ensureCatalogPointer = (catalogPath) => {
+  if (!fs.existsSync(USER_CONFIG)) return;
+  const text = fs.readFileSync(USER_CONFIG, "utf8");
+  if (/^[ \t]*model_catalog_json[ \t]*=/m.test(text)) return;
+  const line = `model_catalog_json = ${JSON.stringify(catalogPath)}\n`;
+  const table = text.search(/^[ \t]*\[/m);
+  const next = table < 0 ? `${text.replace(/\s*$/, "")}\n${line}` : `${text.slice(0, table)}${line}${text.slice(table)}`;
+  const temporary = `${USER_CONFIG}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temporary, next, { mode: 0o600 });
+    fs.renameSync(temporary, USER_CONFIG);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
+};
+
+const resolveCatalogPath = () => {
+  if (!fs.existsSync(USER_CONFIG)) return DEFAULT_CATALOG_PATH;
+  return catalogPathFromToml(fs.readFileSync(USER_CONFIG, "utf8")) || DEFAULT_CATALOG_PATH;
+};
+
 const main = async () => {
   if (!acquireLock()) {
     notify("模型解锁已在运行");
@@ -475,6 +526,13 @@ const main = async () => {
     if (pending) {
       const result = await handlePanelRequest(pending.request, {
         configPath: MODEL_CONFIG, defaultPath: DEFAULT_MODELS, restart,
+        applyCatalog: async (nextModels) => {
+          if (!appPath) throw new Error("未找到 ChatGPT.app 或 Codex.app");
+          const dest = resolveCatalogPath();
+          writeCatalog(dest, buildCatalog(readBundledCatalog(appPath), nextModels));
+          ensureCatalogPointer(dest);
+          log("catalog_written", { path: dest, models: nextModels.map((model) => model.id) });
+        },
       });
       if (!result.ok) log("panel_action_failed", result.error);
       pending.reply(result);
