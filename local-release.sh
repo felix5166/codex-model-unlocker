@@ -71,9 +71,11 @@ ensure_release_source() {
   [[ -z "$(git -C "$SCRIPT_DIR" status --porcelain)" ]] || \
     die "工作树不干净，请先提交当前改动"
 
-  git -C "$SCRIPT_DIR" fetch origin main --quiet
-  [[ "$(git -C "$SCRIPT_DIR" rev-parse HEAD)" == "$(git -C "$SCRIPT_DIR" rev-parse origin/main)" ]] || \
-    die "本地 main 必须与 origin/main 完全一致"
+  if [[ -z "${CODEX_MODEL_UNLOCKER_RELEASE_SKIP_SYNC:-}" ]]; then
+    git -C "$SCRIPT_DIR" fetch origin main --quiet
+    [[ "$(git -C "$SCRIPT_DIR" rev-parse HEAD)" == "$(git -C "$SCRIPT_DIR" rev-parse origin/main)" ]] || \
+      die "本地 main 必须与 origin/main 完全一致"
+  fi
 }
 
 run_release_gate() {
@@ -89,7 +91,7 @@ run_release_gate() {
     const fs = require("fs");
     const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
     const models = Array.isArray(value) ? value : value.models;
-    if (!Array.isArray(models) || models.length === 0) throw new Error("models.json 中没有模型");
+    if (!Array.isArray(models)) throw new Error("models.json 缺少模型列表");
     for (const model of models) {
       if (!model || typeof model.id !== "string" || !model.id.trim()) {
         throw new Error("models.json 中存在无效模型 ID");

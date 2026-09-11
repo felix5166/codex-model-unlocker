@@ -71,6 +71,21 @@
 | `build.sh` | 生成并临时签名 `.app` |
 | `swiftc.sh` | Swift 编译入口，隔离旧工具链的重复模块定义 |
 | `test.sh` | 源码和构建产物的静态检查 |
+| `.githooks/pre-push` | 推送版本标签时在本地打包并上传安装包 |
+
+## 发布
+
+打标签后推送 `main`，即可在本地打包安装包并上传到对应的 GitHub Release：
+
+```sh
+git config core.hooksPath .githooks   # 每个克隆执行一次
+git tag -a v0.1.26 -m "Release v0.1.26"
+git push origin main
+```
+
+`.githooks/pre-push` 在推送 `main` 时，对指向该提交、且尚无 GitHub Release 的版本标签执行本地打包并上传，因此不会再出现只有源码、没有安装包的标签。前置条件：当前分支为 `main`、工作树干净，且 `Info.plist` 版本与标签一致；不满足时会拒绝推送并给出提示。使用 `git push --no-verify` 可跳过该钩子，也可以手动执行 `./local-release.sh prepare <version>` 和 `./local-release.sh publish <version>`。
+
+> 为什么钩子挂在推送 `main` 而不是推送标签：git 在运行 pre-push 之前就已获取远端引用，若在钩子里推送标签会和外层推送竞争同一个引用而失败；本地没有推送完成后的钩子，所以改为在紧跟打标签之后的 `git push origin main` 上触发。
 
 ## 兼容性说明
 
