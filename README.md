@@ -66,7 +66,8 @@
 | `model-config.mjs` | 模型校验、配置读写与保存操作 |
 | `models.json` | 首次使用的默认模型配置 |
 | `Info.plist` | macOS 应用元数据 |
-| `AppIcon.svg` | 应用图标源文件 |
+| `AppIcon.png` | 应用图标，取自 ChatGPT 桌面端图标 |
+| `MenuBarIcon.png` | 菜单栏图标，ChatGPT 官方模板图（自动适配深浅色） |
 | `build.sh` | 生成并临时签名 `.app` |
 | `swiftc.sh` | Swift 编译入口，隔离旧工具链的重复模块定义 |
 | `test.sh` | 源码和构建产物的静态检查 |

@@ -14,7 +14,7 @@ const preload = `
   import { syncBuiltinESMExports } from "node:module";
   os.homedir = () => process.env.CUSTOM_MODELS_TEST_DIR;
   const existsSync = fs.existsSync;
-  fs.existsSync = (value) => /ChatGPTCustomModelsStatusMenu$|AppIcon.icns$/.test(String(value))
+  fs.existsSync = (value) => /ChatGPTCustomModelsStatusMenu$|MenuBarIcon\.png$/.test(String(value))
     ? false : existsSync(value);
   childProcess.spawnSync = (file, args) => {
     console.log(JSON.stringify({ file, args }));

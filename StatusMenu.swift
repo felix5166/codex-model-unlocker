@@ -58,6 +58,7 @@ final class StatusMenuController: NSObject, NSApplicationDelegate, NSWindowDeleg
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let icon = NSImage(contentsOfFile: iconPath)
         icon?.size = NSSize(width: 18, height: 18)
+        icon?.isTemplate = true
         statusItem?.button?.image = icon
         statusItem?.button?.imageScaling = .scaleProportionallyDown
         statusItem?.button?.toolTip = "ChatGPT自定义模型"

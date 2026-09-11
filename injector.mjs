@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 import { loadModels, handlePanelRequest, buildCatalog, writeCatalog } from "./model-config.mjs";
 
-const VERSION = "0.1.24";
+const VERSION = "0.1.25";
 const APP_TITLE = "ChatGPT自定义模型";
 const HOME = os.homedir();
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -18,7 +18,7 @@ const LOG_PATH = path.join(HOME, "Library", "Logs", "CodexModelUnlocker.log");
 const MODEL_CONFIG = path.join(SUPPORT_DIR, "models.json");
 const DEFAULT_MODELS = path.join(SCRIPT_DIR, "models.json");
 const STATUS_MENU_PATH = path.join(SCRIPT_DIR, "ChatGPTCustomModelsStatusMenu");
-const STATUS_ICON_PATH = path.join(SCRIPT_DIR, "AppIcon.icns");
+const STATUS_ICON_PATH = path.join(SCRIPT_DIR, "MenuBarIcon.png");
 const BUNDLE_ID = "com.openai.codex";
 let statusMenuProcess = null;
 

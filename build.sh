@@ -32,14 +32,14 @@ cp "$SOURCE_DIR/injector.mjs" "$CONTENTS/Resources/injector.mjs"
 cp "$SOURCE_DIR/model-config.mjs" "$CONTENTS/Resources/model-config.mjs"
 cp "$SOURCE_DIR/injection.js" "$CONTENTS/Resources/injection.js"
 cp "$SOURCE_DIR/models.json" "$CONTENTS/Resources/models.json"
+cp "$SOURCE_DIR/MenuBarIcon.png" "$CONTENTS/Resources/MenuBarIcon.png"
 /bin/zsh "$SOURCE_DIR/swiftc.sh" -parse-as-library -O -target "$(uname -m)-apple-macosx13.0" \
   "$SOURCE_DIR/StatusMenu.swift" \
   -o "$CONTENTS/Resources/ChatGPTCustomModelsStatusMenu"
 chmod 755 "$CONTENTS/MacOS/CodexModelUnlocker"
 chmod 755 "$CONTENTS/Resources/ChatGPTCustomModelsStatusMenu"
 
-/usr/bin/qlmanage -t -s 1024 -o "$ICON_WORK_DIR" "$SOURCE_DIR/AppIcon.svg" >/dev/null 2>&1
-mv "$ICON_WORK_DIR/AppIcon.svg.png" "$MASTER_ICON"
+cp "$SOURCE_DIR/AppIcon.png" "$MASTER_ICON"
 
 for spec in \
   "16 icon_16x16.png" \
